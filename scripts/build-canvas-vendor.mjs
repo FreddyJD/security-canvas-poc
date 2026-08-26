@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const distDir = join(root, "dist");
-const vendorDir = join(root, "extensions", "security-canvas", "vendor");
+const vendorDir = join(root, "vendor");
 
 const MODULES = ["risk-catalog.js", "correlate.js"];
 

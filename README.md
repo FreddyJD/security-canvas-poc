@@ -43,11 +43,21 @@ types are still marked `@experimental`. The canvas is the surface where triage a
 
 ### Canvas extension (GitHub Copilot app)
 
-**Customize → Canvas → Install canvas extension**, then paste:
+**Customize → Canvas → Install canvas extension**, then paste the repo URL:
 
 ```
-https://github.com/FreddyJD/security-canvas-poc/tree/main/extensions/security-canvas
+https://github.com/FreddyJD/security-canvas-poc
 ```
+
+The real `extension.mjs` lives at the **repository root**, so a whole-repo install lands it exactly
+where the loader looks: `~/.copilot/extensions/<name>/extension.mjs`. `extensions/security-canvas/`
+holds a one-line shim that re-imports the root entrypoint, so plugin-style installs work too. This
+mirrors how [`mobile-canvas-ghcp`](https://github.com/Redth/mobile-canvas-ghcp) is laid out.
+
+> If the extension installs but never appears in **Installed**, check the nesting:
+> `~/.copilot/extensions/<name>/extension.mjs` must be exactly one level deep. A repo whose
+> entrypoint is only at `extensions/<name>/extension.mjs` installs "successfully" and is then
+> silently ignored.
 
 Then run `az login` and open a session. Without a signed-in Azure CLI the canvas renders clearly
 labeled **sample data** rather than pretending your tenant is clean.
