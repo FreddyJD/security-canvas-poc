@@ -19,7 +19,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
-    "test:e2e": "npm run build && node test/e2e-smoke.mjs"
+    "test:e2e": "npm run build && node test/e2e-smoke.mjs",
+    "build:canvas": "tsc && node scripts/build-canvas-vendor.mjs"
   },
   "dependencies": {
     "@azure/identity": "^4.13.2",

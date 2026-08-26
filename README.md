@@ -26,18 +26,43 @@ Triage needs both — and in the demo above, adding data and code context moves 
 
 ## Architecture
 
-MCP is the foundation; a canvas is a UI layer added later. They are orthogonal — the reference
-[`mobile-canvas-ghcp`](https://github.com/Redth/mobile-canvas-ghcp) ships both from one plugin manifest.
+Two layers ship from one repo, sharing a single scoring engine so they can never disagree
+about severity.
 
 ```
-CANVAS   — UI, Copilot app only                    (not yet built)
-MCP      — tools; works in Copilot app, VS Code,   ← you are here
-           Security Copilot, Copilot Studio, Foundry
+CANVAS   — triage queue UI in the Copilot app side panel
+MCP      — tools; Copilot app, VS Code, Security Copilot, Copilot Studio, Foundry
+ENGINE   — src/correlate.ts + src/risk-catalog.ts  (shared by both)
 DATA     — Graph · Purview · Defender · GitHub
 ```
 
-Building the MCP server first is deliberate: it is portable across five hosts and is not exposed to
-the Copilot canvas API, whose types are still marked `@experimental`.
+The MCP server is the portable asset — five hosts, no exposure to the Copilot canvas API whose
+types are still marked `@experimental`. The canvas is the surface where triage actually happens.
+
+## Install
+
+### Canvas extension (GitHub Copilot app)
+
+**Customize → Canvas → Install canvas extension**, then paste:
+
+```
+https://github.com/FreddyJD/security-canvas-poc/tree/main/extensions/security-canvas
+```
+
+Then run `az login` and open a session. Without a signed-in Azure CLI the canvas renders clearly
+labeled **sample data** rather than pretending your tenant is clean.
+
+The canvas exposes four agent-callable actions: `get_triage_queue`, `select_agent`,
+`explain_selected_agent`, `refresh_queue`. Clicking **Ask agent to investigate** hands the selected
+agent to the model — the bidirectional half of a canvas.
+
+> **Why the canvas has no npm dependencies.** A plugin install is a plain file copy: `npm install`
+> never runs and `node_modules` never exists at runtime. Verified against a real install directory.
+> So the canvas imports only Node builtins, `@github/copilot-sdk` (injected by the app), and
+> `vendor/` — the scoring engine, generated from `src/` by `npm run build:canvas`. Never edit
+> `vendor/` by hand.
+
+### MCP server
 
 ## Tools
 
@@ -85,8 +110,6 @@ Detection weights live in [`src/risk-catalog.ts`](src/risk-catalog.ts) — all 8
 with meaning, impact, and remediation. **Tune these to your environment**; the defaults are reasoned,
 not empirical.
 
-## Setup
-
 ```bash
 npm install && npm run build
 
@@ -109,7 +132,8 @@ Register in `.mcp.json` (already scaffolded), or point any MCP client at `node d
 - **Not verified against a live tenant.** All 37 unit tests and the e2e suite pass against stubs.
   The Graph request shapes match the documented schema, but no real tenant response has been observed.
 - **Purview and GitHub exposure are caller-supplied.** `assess_agent_blast_radius` accepts them as
-  arguments; automatic collection is not wired yet.
+  arguments; automatic collection is not wired yet. In the canvas, blast-radius context is attached
+  to sample agents only — never to live tenant data, which would fabricate evidence.
 - **Defender is intentionally absent.** Use the GA [Sentinel MCP server](https://learn.microsoft.com/azure/sentinel/datalake/sentinel-mcp-get-started)
   for incidents rather than re-implementing it.
 
@@ -117,8 +141,7 @@ Register in `.mcp.json` (already scaffolded), or point any MCP client at `node d
 
 1. Auto-collect Purview exposure (`/beta/security/informationProtection`) and GitHub access.
 2. Proxy Sentinel MCP for Defender incident correlation.
-3. Canvas UI — a triage queue and blast-radius graph, where visuals beat text. A plain list does not
-   need a canvas.
+3. Blast-radius graph in the canvas — the one view where a visual genuinely beats text.
 
 ## Layout
 

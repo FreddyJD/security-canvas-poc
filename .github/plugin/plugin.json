@@ -1,0 +1,24 @@
+{
+  "name": "security-canvas",
+  "description": "Triage risky Microsoft Entra agent identities on a live canvas, correlated with Purview data exposure and GitHub code access.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Freddy Diaz",
+    "url": "https://github.com/FreddyJD"
+  },
+  "repository": "https://github.com/FreddyJD/security-canvas-poc",
+  "license": "MIT",
+  "keywords": [
+    "security",
+    "entra",
+    "purview",
+    "defender",
+    "copilot-canvas",
+    "canvas",
+    "agent-security",
+    "risk-triage",
+    "mcp"
+  ],
+  "extensions": "extensions",
+  "mcpServers": "./.mcp.json"
+}
