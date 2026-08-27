@@ -5,3 +5,6 @@ dist/
 .env.local
 .DS_Store
 coverage/
+
+# local test harnesses
+*.tmp.mjs
