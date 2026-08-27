@@ -2,7 +2,7 @@ import http from "node:http";
 import { createCanvas, joinSession } from "@github/copilot-sdk/extension";
 import { assessAgent } from "./vendor/correlate.mjs";
 import { describeDetection } from "./vendor/risk-catalog.mjs";
-import { loadTenantData, SAMPLE_EXPOSURE } from "./graph.mjs";
+import { loadTenantData, SAMPLE_EXPOSURE, beginDeviceCode, getConfig } from "./graph.mjs";
 
 /**
  * Security Canvas — a triage queue for risky Entra agent identities.
@@ -21,6 +21,9 @@ import { loadTenantData, SAMPLE_EXPOSURE } from "./graph.mjs";
 const state = {
 	live: false,
 	note: "Loading…",
+	needsAuth: false,
+	// Device-code prompt shown in the UI while sign-in is pending.
+	auth: null, // { userCode, verificationUri } | { error }
 	assessments: [],
 	selectedId: null,
 	lastRefresh: null,
@@ -40,10 +43,12 @@ function broadcast() {
 
 /** Pull tenant data and re-score every agent through the shared engine. */
 async function refresh() {
-	const { agents, detections, live, note } = await loadTenantData({ limit: 25 });
+	const { agents, detections, live, note, needsAuth } = await loadTenantData({ limit: 25 });
 
 	state.live = live;
 	state.note = note;
+	state.needsAuth = Boolean(needsAuth);
+	if (live) state.auth = null;
 	state.lastRefresh = new Date().toISOString();
 	state.assessments = agents
 		.map((agent) => {
@@ -129,6 +134,30 @@ const server = http.createServer(async (req, res) => {
 
 	if (req.method === "POST" && req.url === "/refresh") {
 		await refresh();
+		return json({ ok: true });
+	}
+
+	// Start device-code sign-in. Returns immediately with the code so the UI can
+	// render it; the token arrives asynchronously and triggers a refresh.
+	if (req.method === "POST" && req.url === "/connect") {
+		if (!getConfig().clientId) {
+			state.auth = { error: "SECURITY_CANVAS_CLIENT_ID is not set. See README: Real tenant data." };
+			broadcast();
+			return json({ ok: false });
+		}
+		beginDeviceCode((p) => {
+			state.auth = { userCode: p.userCode, verificationUri: p.verificationUri };
+			state.note = "Sign-in pending — enter the code below.";
+			broadcast();
+		})
+			.then(async () => {
+				state.auth = null;
+				await refresh();
+			})
+			.catch((e) => {
+				state.auth = { error: String(e.message || e) };
+				broadcast();
+			});
 		return json({ ok: true });
 	}
 
@@ -226,6 +255,42 @@ const canvas = createCanvas({
 				const a = state.assessments.find((x) => x.agentId === state.selectedId);
 				if (!a) throw new Error("No agent is currently selected.");
 				return a;
+			},
+		},
+		{
+			name: "connect_tenant",
+			description:
+				"Start device-code sign-in to Microsoft Graph so the canvas can load real tenant data. " +
+				"Returns a code the user must enter at the given URL.",
+			inputSchema: { type: "object", properties: {} },
+			handler: async () => {
+				if (!getConfig().clientId) {
+					throw new Error(
+						"SECURITY_CANVAS_CLIENT_ID is not set. Set it to an app registration that declares IdentityRiskyAgent.Read.All.",
+					);
+				}
+				return await new Promise((resolve, reject) => {
+					let resolved = false;
+					beginDeviceCode((p) => {
+						state.auth = { userCode: p.userCode, verificationUri: p.verificationUri };
+						broadcast();
+						resolved = true;
+						resolve({
+							userCode: p.userCode,
+							verificationUri: p.verificationUri,
+							instructions: `Ask the user to open ${p.verificationUri} and enter code ${p.userCode}.`,
+						});
+					})
+						.then(async () => {
+							state.auth = null;
+							await refresh();
+						})
+						.catch((e) => {
+							state.auth = { error: String(e.message || e) };
+							broadcast();
+							if (!resolved) reject(e);
+						});
+				});
 			},
 		},
 		{
@@ -345,6 +410,14 @@ function html() {
   li:before{content:"→";position:absolute;left:0;color:var(--info)}
   .gap{font-size:11px;color:var(--dim);padding:3px 0}
   .empty{padding:40px 20px;text-align:center;color:var(--dim);font-size:12px}
+  .authbox{padding:12px 16px;background:#1c2128;border-bottom:1px solid var(--border);
+           font-size:12px;flex-shrink:0}
+  .authbox .code{font-family:ui-monospace,SFMono-Regular,monospace;font-size:20px;
+                 font-weight:600;letter-spacing:.12em;color:var(--info);
+                 background:var(--bg);padding:7px 12px;border-radius:6px;
+                 display:inline-block;margin:6px 0;user-select:all}
+  .authbox a{color:var(--info)}
+  .authbox.err{color:var(--critical)}
   .actions{display:flex;gap:8px;margin:16px 0 4px}
 </style></head>
 <body>
@@ -353,9 +426,11 @@ function html() {
     <h1>Security Canvas</h1>
     <span id="mode" class="badge sample">sample</span>
     <span class="spacer"></span>
+    <button id="connect" class="primary" style="display:none">Connect</button>
     <button id="refresh">Refresh</button>
   </header>
   <div class="note" id="note">Loading…</div>
+  <div id="authbox" class="authbox" style="display:none"></div>
   <div class="cols">
     <div class="queue" id="queue"></div>
     <div class="detail" id="detail"></div>
@@ -376,6 +451,22 @@ function html() {
     mode.textContent = s.live ? 'live tenant' : 'sample data';
     mode.className = 'badge ' + (s.live ? 'live' : 'sample');
     document.getElementById('note').textContent = s.note || '';
+
+    document.getElementById('connect').style.display = (!s.live && !s.auth) ? '' : 'none';
+
+    const ab = document.getElementById('authbox');
+    if (s.auth && s.auth.error) {
+      ab.style.display = ''; ab.className = 'authbox err';
+      ab.textContent = 'Sign-in failed: ' + s.auth.error;
+    } else if (s.auth && s.auth.userCode) {
+      ab.style.display = ''; ab.className = 'authbox';
+      ab.innerHTML = 'Open <a href="' + esc(s.auth.verificationUri) + '" target="_blank">' +
+        esc(s.auth.verificationUri) + '</a> and enter:<br/>' +
+        '<span class="code">' + esc(s.auth.userCode) + '</span><br/>' +
+        '<span style="color:var(--muted)">Waiting for sign-in\u2026 the queue refreshes automatically.</span>';
+    } else {
+      ab.style.display = 'none';
+    }
 
     const q = document.getElementById('queue');
     if (!s.assessments.length) {
@@ -446,6 +537,7 @@ function html() {
   }
 
   document.getElementById('refresh').onclick = () => post('/refresh');
+  document.getElementById('connect').onclick = () => post('/connect');
 </script>
 </body></html>`;
 }

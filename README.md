@@ -59,12 +59,57 @@ mirrors how [`mobile-canvas-ghcp`](https://github.com/Redth/mobile-canvas-ghcp) 
 > entrypoint is only at `extensions/<name>/extension.mjs` installs "successfully" and is then
 > silently ignored.
 
-Then run `az login` and open a session. Without a signed-in Azure CLI the canvas renders clearly
-labeled **sample data** rather than pretending your tenant is clean.
+### Real tenant data
 
-The canvas exposes four agent-callable actions: `get_triage_queue`, `select_agent`,
-`explain_selected_agent`, `refresh_queue`. Clicking **Ask agent to investigate** hands the selected
-agent to the model — the bidirectional half of a canvas.
+The canvas ships with clearly labeled **sample data** so it is useful immediately. To load your own
+tenant, click **Connect** in the canvas header and complete the device-code prompt. The queue
+refreshes automatically once sign-in finishes.
+
+Connect needs an app registration. **The Azure CLI cannot be used** — it is a first-party app
+pre-authorized for a fixed set of Graph scopes, and `IdentityRiskyAgent.Read.All` is not among them,
+so an `az` token returns 403 no matter how privileged the signed-in user is (`AADSTS65002`).
+
+One-time setup, by a Global Administrator:
+
+```bash
+# 1. Register a public client app
+az ad app create --display-name "Security Canvas" \
+  --is-fallback-public-client true \
+  --required-resource-accesses '[{
+    "resourceAppId": "00000003-0000-0000-c000-000000000000",
+    "resourceAccess": [
+      {"id": "3215c57f-3faa-4295-95c2-6f14a5bc6124", "type": "Scope"},
+      {"id": "8f6a01e7-0391-4ee5-aa22-a3af122cef27", "type": "Scope"}
+    ]
+  }]'
+
+# 2. Grant admin consent (IdentityRiskyAgent.Read.All is admin-restricted)
+az ad app permission admin-consent --id <appId>
+```
+
+Then point the canvas at it:
+
+```bash
+export SECURITY_CANVAS_CLIENT_ID=<appId>
+export SECURITY_CANVAS_TENANT_ID=<tenantId>   # optional; defaults to "organizations"
+```
+
+| Variable | Purpose |
+|---|---|
+| `SECURITY_CANVAS_CLIENT_ID` | App registration used for device-code sign-in. Required for live data. |
+| `SECURITY_CANVAS_TENANT_ID` | Tenant to sign in against. Optional. |
+| `SECURITY_CANVAS_TOKEN` | A Graph access token, used as-is. Useful in CI. |
+
+Tokens cache at `~/.copilot/security-canvas/token-cache.json` (mode `0600`) and refresh silently, so
+sign-in is a one-time step per device.
+
+**Requirements for live data:** `IdentityRiskyAgent.Read.All` with admin consent; a Security Reader,
+Security Operator, or Security Administrator role; and Microsoft Agent 365 licensing. Without all
+three the canvas stays on sample data and says why.
+
+> **Conditional Access.** Tenants enforcing Token Protection or device compliance may block sign-in
+> from an unmanaged device (`AADSTS530084`, `AADSTS53003`). That is a policy decision, not a bug —
+> the canvas reports it in the note bar rather than failing silently.
 
 > **Why the canvas has no npm dependencies.** A plugin install is a plain file copy: `npm install`
 > never runs and `node_modules` never exists at runtime. Verified against a real install directory.
