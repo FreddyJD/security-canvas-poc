@@ -6,29 +6,11 @@
  * are pure — data in, HTML string out, no DOM access at module scope. Keeping
  * them that way is what makes the UI testable without a browser.
  */
+import { esc } from "../../../platform/html.mjs";
 
-/**
- * Escape untrusted text for HTML interpolation.
- *
- * Every value that reaches the DOM goes through this. Agent display names and
- * `riskEvidence` come from Graph, which means they are ultimately attacker-
- * influenced: an agent named `<img onerror=...>` would otherwise execute
- * inside the analyst's canvas. Escaping at the boundary, not at the source, is
- * what makes that impossible to forget.
- *
- * @param {unknown} s
- * @returns {string}
- */
-const HTML_ENTITIES = /** @type {Record<string, string>} */ ({
-	"&": "&amp;",
-	"<": "&lt;",
-	">": "&gt;",
-	'"': "&quot;",
-	"'": "&#39;",
-});
-
-export const esc = (/** @type {unknown} */ s) =>
-	String(s ?? "").replace(/[&<>"']/g, (c) => HTML_ENTITIES[c] ?? c);
+// Re-exported so a component in this feature needs only one import for
+// rendering, while the escaping itself stays shared with the other canvas.
+export { esc };
 
 /** Canonical severity colours. One source, so badge and bar never drift apart. */
 export const SEVERITY_COLOR = {

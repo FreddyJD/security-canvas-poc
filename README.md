@@ -26,16 +26,23 @@ Triage needs both — and in the demo above, adding data and code context moves 
 
 ## Architecture
 
-Two hosts ship from one repo, over a single feature. They share the scoring engine, the data
-access, and the use cases, so they can never disagree about severity.
+Two hosts and two features ship from one repo. Each feature owns its full stack; the hosts are
+composition roots.
+
+| Feature | Question it answers | Backend |
+|---|---|---|
+| `agent-inventory` | "What are my agents?" | ZTAI unified inventory (`/rp/zerotrustai`) — the estate across M365 Copilot, Copilot Studio, Endpoint |
+| `risky-agents` | "What needs triage?" | Entra ID Protection (`/beta/identityProtection`) — identity risk, scored cross-pillar |
+
+Both use the same layering:
 
 ```
-HOSTS    — extension.mjs (canvas panel) · mcp.mjs (stdio; VS Code, Security Copilot, Foundry)
+HOSTS    — extension.mjs (two canvas panels) · mcp.mjs (stdio; VS Code, Security Copilot, Foundry)
 TOOLS    — canvas actions + MCP tools — thin adapters, no logic
-VIEWS    — screens, behind a view registry the model routes to
-USECASES — all the logic: auth gaps, failures, selection, refresh  ← the middle layer
-DATA     — AgentRepository: Graph in, scored assessments out
-DOMAIN   — scoring + detection catalog: pure, zero imports
+VIEWS    — screens; the model routes to them by name
+USECASES — all the logic: auth gaps, failures, filtering, refresh  ← the middle layer
+DATA     — repository: API in, domain objects out
+DOMAIN   — scoring, presentation rules, contracts: pure, zero imports
 ```
 
 Dependencies point one way, inward. `domain/` imports nothing. `usecases/` depends on the
@@ -59,6 +66,18 @@ Everything that can go wrong on the way to a screen — no client id, no token, 
 a 403, a throttle, an empty tenant — is resolved in `usecases/` into a `status` the UI renders
 without branching on HTTP codes. That is why both hosts are thin, and why `agent-triage.test.ts`
 can cover every failure mode without a browser or a network.
+
+### Design system without a build step
+
+The Agents view matches the Security-UX Agents page because
+[`platform/design-tokens.mjs`](platform/design-tokens.mjs) carries the real `webLightTheme` /
+`webDarkTheme` values from `@fluentui/tokens`, extracted verbatim. Fluent's React components can't
+run here — they need React, a bundler and a build — but the palette, type ramp, spacing scale and
+radii are what make a page look like Fluent, and those are just values.
+
+They're emitted as CSS custom properties under `:root` and `[data-theme="dark"]`, so switching
+theme is one attribute flip: no re-render, no stylesheet swap, no flash. An inline script in the
+shell sets it from `localStorage` or `prefers-color-scheme` before first paint.
 
 ### Why a view registry, not generic components
 
@@ -116,7 +135,9 @@ To use your own app registration instead, set `SECURITY_CANVAS_CLIENT_ID` or wri
 
 | Tool | Purpose |
 |---|---|
-| `list_risky_agents` | Triage-ordered list of flagged agents. The entry point. |
+| `list_agents` | The whole agent estate across every Microsoft platform. Answers "what are my agents?". |
+| `get_agent_estate_summary` | Tenant totals: counts by risk level, by platform, and coverage gaps. |
+| `list_risky_agents` | Triage-ordered list of Entra-flagged agents. The security entry point. |
 | `explain_agent_risk` | One agent's detection history in plain language, with remediation. |
 | `assess_agent_blast_radius` | Correlates Entra risk with Purview + GitHub exposure. |
 | `list_recent_agent_detections` | Tenant-wide activity in a time window, grouped by type. |
@@ -174,7 +195,7 @@ reasoned, not empirical.
 ```bash
 npm install       # only the MCP SDK + zod; the canvas itself needs no deps
 
-npm test          # 103 unit tests
+npm test          # 177 unit tests
 npm run typecheck # tsc --noEmit over JSDoc-annotated ESM
 npm run test:e2e  # real MCP protocol against a fake tenant, no credentials needed
 npm run inspect   # browse tools in the MCP Inspector
@@ -182,9 +203,19 @@ npm run inspect   # browse tools in the MCP Inspector
 
 There is no build step — `mcp.mjs` and `extension.mjs` run as-is.
 
-**Permissions.** Reads need `IdentityRiskyAgent.Read.All` and one of Security Reader / Security
-Operator / Security Administrator. Writes need `IdentityRiskyAgent.ReadWrite.All` and Security
-Administrator.
+**Permissions.** Entra reads need `IdentityRiskyAgent.Read.All` and one of Security Reader /
+Security Operator / Security Administrator. Writes need `IdentityRiskyAgent.ReadWrite.All` and
+Security Administrator.
+
+The **inventory** API gates on directory role rather than on a Graph scope: it requires Global
+Administrator or Security Administrator, so a correctly-scoped token from a non-admin still gets
+403. It takes the same delegated Graph token as everything else, so no extra consent is needed.
+`SECURITY_CANVAS_INVENTORY_BASE` points it at a dev ring or `http://localhost:5105`.
+
+> The catalog it serves is the **flagged** subset — agents that are risky, unowned, publicly
+> exposed, or unmonitored — not the whole estate. The true total comes from `agents/summary`, which
+> is why both the canvas and `list_agents` lead with "N flagged of M in the estate" rather than
+> letting the row count be read as the tenant size.
 
 Register in `.mcp.json` (already scaffolded), or point any MCP client at `node mcp.mjs`.
 
@@ -216,7 +247,16 @@ Feature-first: everything about risky agents lives in one directory, in dependen
 extension.mjs                    canvas host — composition root (must stay at repo root)
 mcp.mjs                          MCP host — stdio (stdout is JSON-RPC; never console.log)
 
-features/risky-agents/
+features/agent-inventory/        "what are my agents?" -- the ZTAI unified estate
+  domain/       types.d.ts       the ADR-077 catalog + summary contracts
+                presentation.mjs labels, risk meter, metrics, filter/sort rules
+  data/         inventory-repository.mjs
+  usecases/     inventory-browse.mjs · store.mjs
+  components/   agent-table.mjs · metric-card.mjs · filter-bar.mjs
+  views/        inventory-screen.mjs · inventory-server.mjs · client.mjs · styles.mjs
+  tools/        canvas-actions.mjs · mcp-tools.mjs
+
+features/risky-agents/           "what needs triage?" -- Entra identity risk
   domain/       types.d.ts       shared contracts, incl. the AgentSource port
                 scoring.mjs      the scoring engine — the actual product
                 risk-catalog.mjs detection knowledge base — tune this
@@ -237,18 +277,29 @@ features/risky-agents/
                 render-text.mjs     prose for models (the MCP peer of components/)
 
 platform/       graph.mjs        Graph client — token provider injected
+                inventory-client.mjs  ZTAI inventory client (Graph RP / portal proxy)
                 auth.mjs         PKCE browser sign-in, token cache, CLI fallback
                 config.mjs       disk-first config (the app has no shell env)
+                canvas-http.mjs  shared panel plumbing + the browser-module allowlist
+                design-tokens.mjs  Fluent light/dark tokens as CSS custom properties
+                html.mjs         esc() — the one escaping boundary, shared by both
 
-test/           scoring.test.ts          37 — scoring properties + live-data regressions
-                components.test.ts       22 — rendering, escaping, routing
-                agent-triage.test.ts     20 — every failure mode, no network
-                graph.test.ts            14 — requests, paging, errors, injection
-                agent-repository.test.ts 10 — fetch strategy and mapping
-                e2e-smoke.mjs            real MCP protocol, stub injected at the Graph boundary
+test/           scoring.test.ts               37 — scoring properties + live-data regressions
+                inventory-browse.test.ts      35 — use cases, paging, and every component
+                inventory-presentation.test.ts 31 — labels, filters, sort stability
+                components.test.ts            22 — rendering, escaping, routing
+                agent-triage.test.ts          20 — every failure mode, no network
+                graph.test.ts                 14 — requests, paging, errors, injection
+                agent-repository.test.ts      10 — fetch strategy and mapping
+                canvas-http.test.ts            8 — the browser-module allowlist (a security boundary)
+                e2e-smoke.mjs                 real MCP protocol, stub at the Graph boundary
 ```
 
 Components are loaded twice — by Node in tests and by the browser as ES modules over the canvas's
 own HTTP server. They are pure string functions, so what the tests check is exactly what ships.
-Only `components/` and `views/` are reachable from the browser; `platform/` and `domain/` are not.
+
+What the browser may load is an allowlist by *layer*, specced in `canvas-http.test.ts`: inside a
+feature only `components/`, `views/` and `domain/`; inside `platform/` only `html.mjs` and
+`design-tokens.mjs`. `data/`, `usecases/` and `platform/auth.mjs` are never reachable — serving all
+of `platform/` to get the shared `esc()` would also hand out the token cache.
 
