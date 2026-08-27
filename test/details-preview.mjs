@@ -12,6 +12,7 @@
 import { createServer, listen } from "../platform/canvas-http.mjs";
 import { buildAgentDetails } from "../features/agent-details/domain/details-adapter.mjs";
 import { DETAILS_STYLES } from "../features/agent-details/views/styles.mjs";
+import { themeBootScript } from "../platform/theme-toggle.mjs";
 import { readFile } from "node:fs/promises";
 import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,7 +61,7 @@ const server = createServer(async (req, res, url) => {
 	if (url.pathname === "/") {
 		res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
 		return res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"/>
-<title>Agent details preview</title><link rel="stylesheet" href="/app.css"/></head>
+<title>Agent details preview</title><link rel="stylesheet" href="/app.css"/>${themeBootScript()}</head>
 <body><div class="page"><header class="page-head"><span class="spacer"></span>
 <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Switch theme"></button></header>
 <div class="scroll" id="main"></div></div>

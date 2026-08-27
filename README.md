@@ -92,15 +92,57 @@ can cover every failure mode without a browser or a network.
 
 ### Design system without a build step
 
-The Agents view matches the Security-UX Agents page because
-[`platform/design-tokens.mjs`](platform/design-tokens.mjs) carries the real `webLightTheme` /
-`webDarkTheme` values from `@fluentui/tokens`, extracted verbatim. Fluent's React components can't
-run here — they need React, a bundler and a build — but the palette, type ramp, spacing scale and
-radii are what make a page look like Fluent, and those are just values.
+The panels look like Security-UX's Unified UX POC because
+[`platform/design-tokens.mjs`](platform/design-tokens.mjs) carries the real `lithiumLightTheme` /
+`lithiumDarkTheme` values from `@sfe/react-theme` — the **Lithium** themes that POC and Perception
+both render. SFE's React components can't run here — they need React, a bundler and a build — but
+the palette, type ramp, spacing scale and radii are what make a page look like Lithium, and those
+are just values.
+
+The values are *generated*, not hand-copied:
+
+```
+node scripts/generate-design-tokens.mjs \
+  ../Security-UX/node_modules/@sfe/react-theme > platform/design-tokens.mjs
+```
+
+A hand-copied palette drifts from the theme it came from. Security-UX has exactly that bug —
+`app/shared/theming/lithium/tokens.custom.ts` froze a page gradient of `#202935 → #0D111D` back
+when Lithium shipped none, and Lithium now ships `#0B1B31 → #0E1216`. Regenerating instead makes an
+SFE upgrade a diff rather than an audit. Point the script at the **hoisted** copy: Security-UX
+installs a second, older one that shadows it, which is why that repo imports through a `V2SfeTheme`
+alias rather than by package name.
+
+Two details carry over from
+[`PocUnifiedux/shared/data/unifieduxTheme.ts`](../Security-UX/packages/security-unifiedux/src/app/PocUnifiedux/shared/data/unifieduxTheme.ts),
+and they are the difference between Lithium and Fluent wearing Lithium's palette:
+
+- **The radius ramp is remapped, not hand-typed.** Lithium ships `borderRadiusMedium: 4px`;
+  Perception draws with 16px by pointing the ramp at whichever token *already holds* 16px. A
+  literal would freeze; a lookup follows an SFE restyle.
+- **The page background is a gradient composed from the theme's own stops**, published on
+  `--canvas-page-background`. Lithium's ground is a soft off-centre radial wash, not a flat fill —
+  dark lifts the light source to the top edge, light drops it into the upper-left.
+
+What does *not* come across is `lithiumCustomStyleHooks`, the 54 hooks that restyle Fluent's React
+components. Nothing here renders a Fluent component, so there is nothing for them to restyle; the
+stylesheets under `features/*/views/styles.mjs` play that role and are written against these tokens
+directly.
 
 They're emitted as CSS custom properties under `:root` and `[data-theme="dark"]`, so switching
 theme is one attribute flip: no re-render, no stylesheet swap, no flash. An inline script in the
 shell sets it from `localStorage` or `prefers-color-scheme` before first paint.
+
+Four surfaces render HTML, and all four are themed — including
+[`platform/auth.mjs`](platform/auth.mjs), the page you land on after the Entra redirect. That one
+can't use `data-theme`: it's served by the throwaway loopback listener that exists only for the
+OAuth callback, so there's no `localStorage` on that origin to read a choice from and no toggle to
+offer on a tab that closes itself. It inlines `themeDeclarations("dark")` under
+`prefers-color-scheme` instead.
+
+`test/design-tokens.test.ts` asserts the shape rather than the hexes — the values are meant to
+change when SFE ships, the remapped ramp and the derived gradient are not. It also fails the build
+on any colour literal in shipped source, which is the rule that would have caught the sign-in page.
 
 ### Playbooks: when there is no API to call
 
@@ -189,7 +231,7 @@ pulls back, so the map never accumulates open branches to tidy up. All of the ar
 (`domain/map-camera.mjs`, `domain/map-layout.mjs`) is DOM-free and covered in
 `test/agent-details-map.test.ts`; the paint is asserted against a recording stub in
 `test/agent-details-paint.test.ts`, which is what catches the failure a screenshot cannot show — a
-Fluent token reaching `fillStyle` unresolved, where a 2D context silently ignores it and keeps the
+Lithium token reaching `fillStyle` unresolved, where a 2D context silently ignores it and keeps the
 previous fill.
 
 `npm run preview:details` serves the page against fixtures if you want to look at it without a tenant.
@@ -407,7 +449,7 @@ platform/       graph.mjs        Graph client — token provider injected
                 auth.mjs         PKCE browser sign-in, token cache, CLI fallback
                 config.mjs       disk-first config (the app has no shell env)
                 canvas-http.mjs  shared panel plumbing + the browser-module allowlist
-                design-tokens.mjs  Fluent light/dark tokens as CSS custom properties
+                design-tokens.mjs  Lithium light/dark tokens as CSS custom properties (generated)
                 theme-toggle.mjs   light/dark switching, shared by every panel
                 html.mjs         esc() — the one escaping boundary, shared by all
 
@@ -419,9 +461,14 @@ test/           purview-playbook.test.ts      91 — injection defence, playbook
                 agent-repository.test.ts      10 — fetch strategy and mapping
                 agent-triage.test.ts          10 — query defaults, grouping, auth classification
                 canvas-http.test.ts            8 — the browser-module allowlist (a security boundary)
+                design-tokens.test.ts          9 — the Lithium port: remapped ramp, derived gradient,
+                                                  and no colour literal in shipped source
                 e2e-smoke.mjs                 real MCP protocol, stub at the Graph boundary
                 panel-smoke.mjs               the real Agents panel over HTTP, stub repository
                 panel-preview.mjs             not a test — serves the panel on fixtures to look at
+
+scripts/        generate-design-tokens.mjs   regenerates platform/design-tokens.mjs from
+                                             @sfe/react-theme; not run at build or test time
 ```
 
 Components are loaded twice — by Node in tests and by the browser as ES modules over the canvas's
