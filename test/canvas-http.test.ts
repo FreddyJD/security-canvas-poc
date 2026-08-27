@@ -13,13 +13,16 @@ describe("isBrowserModule", () => {
 	it("serves a feature's presentation layers", () => {
 		expect(isBrowserModule("features/agent-inventory/views/client.mjs")).toBe(true);
 		expect(isBrowserModule("features/agent-inventory/components/agent-table.mjs")).toBe(true);
+		// The screen imports its empty-state wording from the domain, so this
+		// layer has to stay reachable or the page fails to load its modules.
 		expect(isBrowserModule("features/agent-inventory/domain/presentation.mjs")).toBe(true);
-		expect(isBrowserModule("features/risky-agents/components/primitives.mjs")).toBe(true);
+		expect(isBrowserModule("features/purview-protection/components/playbook-steps.mjs")).toBe(true);
 	});
 
 	it("refuses a feature's data and use-case layers", () => {
 		// These hold the Graph calls and the tenant queries.
 		expect(isBrowserModule("features/agent-inventory/data/inventory-repository.mjs")).toBe(false);
+		expect(isBrowserModule("features/agent-inventory/usecases/inventory-browse.mjs")).toBe(false);
 		expect(isBrowserModule("features/risky-agents/usecases/agent-triage.mjs")).toBe(false);
 		expect(isBrowserModule("features/risky-agents/tools/mcp-tools.mjs")).toBe(false);
 	});

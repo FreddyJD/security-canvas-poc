@@ -4,16 +4,25 @@
  * Composition root and nothing else: build the dependencies, declare the
  * canvases, wire the actions. Every behaviour lives under features/.
  *
- * Three canvases, one estate:
- *   Agents          the whole inventory across every Microsoft agent plane
- *   Security Canvas the Entra identity-risk triage queue over the same agents
+ * Two canvases, one estate:
+ *   Agents          the whole inventory across every Microsoft agent plane,
+ *                   including "show me the risky agents" — that is this table
+ *                   filtered to the risky bands, not a separate screen
  *   Protect agents  a playbook that hands the operator the exact PowerShell
  *                   Purview requires, because it has no API for agent scoping
  *
- * They are separate surfaces rather than tabs because they answer different
- * questions and the model routes to them by name — "what are my agents?",
- * "what needs triage?" and "protect my sensitive data" should not land on the
- * same screen.
+ * There used to be a third, "Security Canvas": a two-pane triage queue over
+ * Entra's riskyAgents. It was removed because it was a second answer to a
+ * question this one already answers. An inventory row's `riskLevel` *is* Entra
+ * ID Protection risk — the service joins riskyAgents, riskyUsers and
+ * riskyServicePrincipals server-side at collect time — so the triage queue was
+ * a different-looking list of the same agents, with its own sort order, its own
+ * empty state, and its own idea of what "high" meant. Two surfaces that can
+ * disagree about which agents are risky is worse than one that cannot.
+ *
+ * The depth that view had and a table row does not — per-detection history and
+ * the scored explanation — did not go away; it moved to where depth belongs, as
+ * the `explain_agent_risk` MCP tool the row's investigate action points at.
  *
  * Must stay at the repository root: a whole-repo plugin install lands the
  * entrypoint at ~/.copilot/extensions/<name>/extension.mjs, exactly one level
@@ -22,12 +31,6 @@
  * NOTE: stdout is the JSON-RPC channel. Never console.log here.
  */
 import { createCanvas, joinSession } from "@github/copilot-sdk/extension";
-
-import { AgentRepository } from "./features/risky-agents/data/agent-repository.mjs";
-import { CanvasStore } from "./features/risky-agents/usecases/store.mjs";
-import { createCanvasActions } from "./features/risky-agents/tools/canvas-actions.mjs";
-import * as triage from "./features/risky-agents/usecases/agent-triage.mjs";
-import { startCanvasServer } from "./features/risky-agents/views/canvas-server.mjs";
 
 import { PlaybookStore } from "./features/purview-protection/usecases/store.mjs";
 import { createPlaybookActions } from "./features/purview-protection/tools/playbook-tools.mjs";
@@ -47,14 +50,12 @@ let session;
 // resolves, so they must read the session at call time rather than capture it.
 const getSession = () => session;
 
-const triageCtx = { store: new CanvasStore(), repository: new AgentRepository(), getSession };
 const inventoryCtx = { store: new InventoryStore(), repository: new InventoryRepository(), getSession };
 
 // The playbook reads DLP coverage from the same inventory the Agents panel
 // shows, so it shares that repository rather than opening its own client.
 const playbookCtx = { store: new PlaybookStore(), repository: inventoryCtx.repository, getSession };
 
-const triagePanel = await startCanvasServer(triageCtx);
 const inventoryPanel = await startInventoryServer(inventoryCtx);
 const playbookPanel = await startPlaybookServer(playbookCtx);
 
@@ -63,7 +64,8 @@ const agentsCanvas = createCanvas({
 	displayName: "Agents",
 	description:
 		"The tenant's AI agent estate across Microsoft 365 Copilot, Copilot Studio, Endpoint and other platforms, " +
-		"with owner, platform, risk and status.",
+		"with owner, platform, risk and status. Also answers 'what are my risky agents?' — that is this table " +
+		"filtered to the agents Entra ID Protection currently scores as risky.",
 
 	actions: createInventoryActions(inventoryCtx),
 
@@ -83,29 +85,6 @@ const agentsCanvas = createCanvas({
 	},
 
 	onClose: async () => inventoryPanel.close(),
-});
-
-const securityCanvas = createCanvas({
-	id: "security-canvas",
-	displayName: "Security Canvas",
-	description:
-		"Triage risky Microsoft Entra agent identities, correlated with Purview data exposure and GitHub code access.",
-
-	actions: createCanvasActions(triageCtx),
-
-	open: async () => {
-		if (triageCtx.store.get().assessments.length === 0) {
-			triage.refreshQueue(triageCtx).catch(() => {});
-		}
-		const { status, assessments } = triageCtx.store.get();
-		return {
-			url: `http://127.0.0.1:${triagePanel.port}`,
-			title: "Security Canvas",
-			status: status === "connected" ? `${assessments.length} at risk` : "sign in required",
-		};
-	},
-
-	onClose: async () => triagePanel.close(),
 });
 
 const protectCanvas = createCanvas({
@@ -132,8 +111,7 @@ const protectCanvas = createCanvas({
 	onClose: async () => playbookPanel.close(),
 });
 
-session = await joinSession({ canvases: [agentsCanvas, securityCanvas, protectCanvas] });
+session = await joinSession({ canvases: [agentsCanvas, protectCanvas] });
 
-// Warm in the background so the first open of any panel is instant.
+// Warm in the background so the first open of either panel is instant.
 inventory.refreshInventory(inventoryCtx).catch(() => {});
-triage.refreshQueue(triageCtx).catch(() => {});

@@ -11,7 +11,7 @@
  * @typedef {import("../domain/types.js").InventoryAgent} InventoryAgent
  * @typedef {{ store: InventoryStore, repository: InventorySource }} InventoryContext
  */
-import { getToken } from "../../../platform/auth.mjs";
+import { getToken, signIn } from "../../../platform/auth.mjs";
 import { InventoryError } from "../../../platform/inventory-client.mjs";
 import { GraphError } from "../../../platform/graph.mjs";
 import { buildMetrics, filterAgents, platformsIn, sortAgents } from "../domain/presentation.mjs";
@@ -57,6 +57,33 @@ export async function refreshInventory({ store, repository }, opts = {}) {
 	} catch (err) {
 		store.set({ ...failureState(err), agents: [], summary: null });
 	}
+}
+
+/**
+ * Interactive sign-in, then load.
+ *
+ * The Sign in button on the gate has always POSTed to `/api/connect`; until
+ * this existed that route was not registered on the inventory server and the
+ * button 404'd silently, leaving the panel on the gate with no feedback. It
+ * only mattered once the Agents canvas became the only place to sign in.
+ *
+ * Status goes to `loading` first so the gate shows progress while the browser
+ * round-trip happens, rather than looking dead for several seconds.
+ *
+ * @param {InventoryContext} ctx
+ */
+export async function connect(ctx) {
+	ctx.store.set({ status: "loading", note: "Waiting for sign-in…", hint: "" });
+	try {
+		await signIn();
+	} catch (err) {
+		return ctx.store.set({
+			status: "error",
+			note: err instanceof Error ? err.message : String(err),
+			hint: "",
+		});
+	}
+	await refreshInventory(ctx);
 }
 
 /**

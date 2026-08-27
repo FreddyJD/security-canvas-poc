@@ -10,6 +10,7 @@ import { esc } from "../../../platform/html.mjs";
 import { agentTable } from "../components/agent-table.mjs";
 import { filterBar, pager } from "../components/filter-bar.mjs";
 import { metricRow } from "../components/metric-card.mjs";
+import { emptyMessage } from "../domain/presentation.mjs";
 
 const SHIELD = `<svg class="gate-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
   <path d="M12 3l7 3v6c0 4.4-3 8.3-7 9-4-0.7-7-4.6-7-9V6l7-3z"/>
@@ -21,7 +22,11 @@ const SHIELD = `<svg class="gate-icon" viewBox="0 0 24 24" fill="none" stroke="c
  */
 export function inventoryGate(state) {
 	if (state.status === "loading") {
-		return `<div class="gate">${SHIELD}<h2>Loading</h2><p><span class="spin"></span>Reading your agent inventory…</p></div>`;
+		// The note carries what we are actually waiting on — reading the
+		// inventory, or a sign-in round-trip in the browser. Falling back keeps
+		// the first paint honest before anything has been attempted.
+		const what = state.note || "Reading your agent inventory…";
+		return `<div class="gate">${SHIELD}<h2>Loading</h2><p><span class="spin"></span>${esc(what)}</p></div>`;
 	}
 	if (state.status === "error") {
 		return `<div class="gate">${SHIELD}
@@ -49,7 +54,7 @@ export function renderInventory(vm) {
     ${metricRow(vm.metrics, vm.filters.slice)}
     ${filterBar({ platforms: vm.platforms, filters: vm.filters, matchedCount: vm.matchedCount })}
     ${vm.note ? `<p class="scope-note">${esc(vm.note)}</p>` : ""}
-    <div class="table-wrap">${agentTable(vm.rows, vm.sort)}</div>
+    <div class="table-wrap">${agentTable(vm.rows, vm.sort, emptyMessage(vm.filters))}</div>
     ${pager(vm.page, vm.pageCount)}
   `;
 }
