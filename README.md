@@ -26,7 +26,7 @@ Triage needs both — and in the demo above, adding data and code context moves 
 
 ## Architecture
 
-Two hosts and three features ship from one repo. Each feature owns its full stack; the hosts are
+Two hosts and four features ship from one repo. Each feature owns its full stack; the hosts are
 composition roots.
 
 ### One list, one definition of "risky"
@@ -53,13 +53,14 @@ so the answer is grounded in detections rather than inferred from the word "high
 | Feature | Question it answers | Backend |
 |---|---|---|
 | `agent-inventory` | "What are my agents?" **and** "which need triage?" | ZTAI unified inventory (`/rp/zerotrustai`) — the estate across M365 Copilot, Copilot Studio, Endpoint |
+| `agent-details` | "Tell me more about *this* agent" | The same inventory, plus `agents/{id}` and `agents/{id}/exposure` — identity, score, access, and a pan-and-zoom graph |
 | `risky-agents` | "*Why* is this one risky?" | Entra ID Protection (`/beta/identityProtection`) — detection history, scored cross-pillar |
 | `purview-protection` | "Protect my sensitive data" | None — Purview has no API for this, so it produces a script: guided steps, or one script Copilot runs (see below) |
 
-Both use the same layering:
+All four use the same layering:
 
 ```
-HOSTS    — extension.mjs (two canvas panels) · mcp.mjs (stdio; VS Code, Security Copilot, Foundry)
+HOSTS    — extension.mjs (three canvas panels) · mcp.mjs (stdio; VS Code, Security Copilot, Foundry)
 TOOLS    — canvas actions + MCP tools — thin adapters, no logic
 VIEWS    — screens; the model routes to them by name
 USECASES — all the logic: auth gaps, failures, filtering, refresh  ← the middle layer
@@ -158,6 +159,41 @@ Progress is worded as a claim throughout ("I ran this", "3 of 8 steps marked don
 can see the operator's terminal, so in guided mode the only evidence that the protection is real is
 re-reading coverage afterwards — which is what the last step asks for.
 
+### An agent detail page that refuses to fabricate
+
+`agent-details` is the port of the Security-UX agent-detail skin, re-pointed at the API this repo can
+actually reach: the catalog row it already holds, plus `agents/{id}` and `agents/{id}/exposure`.
+
+Two rules do most of the work, and both are about a distinction that is invisible on screen:
+
+**A fact nobody measured is not a fact that is false.** The identity list draws all nine rows for
+every agent, and an unanswered one carries `known: false` and renders as "not available" rather than
+being dropped. Dropping it would make the card's height depend on how much the sources happened to
+answer, and — worse — would make "no owner is recorded" indistinguishable from "this page does not
+report owners". The same rule runs through the score (`applies: false` is listed *separately* from
+`met: false`), the posture sentence (a `null` protection flag is never mentioned), and the access
+card (no dependency graph shows an empty state, not "0 resources").
+
+**Evidence, not inference.** `identity.coverageTarget` says which object Conditional Access would be
+evaluated *against*. It is not a verdict, and the catalog carries no verdict — so `caGoverned` stays
+`null`, PolicyGoverned drops out of the score's denominator, and the posture panel says nothing about
+Conditional Access at all. An earlier version read the target as `caGoverned: true`; it inflated
+every identity-bearing agent's score and put "Protected by Conditional Access coverage" on screen for
+agents no policy may cover. `test/agent-details-adapter.test.ts` pins all of this.
+
+The map itself is a hub-and-rings layout rather than a force simulation, because a ring *encodes*
+something: centre is the agent, inner is what reaches it, outer is what it reaches. A force graph
+gives a different picture every run and its positions mean nothing a reader can learn. Detail is a
+function of **how close you are** — a cluster opens as the camera approaches and closes when it
+pulls back, so the map never accumulates open branches to tidy up. All of the arithmetic
+(`domain/map-camera.mjs`, `domain/map-layout.mjs`) is DOM-free and covered in
+`test/agent-details-map.test.ts`; the paint is asserted against a recording stub in
+`test/agent-details-paint.test.ts`, which is what catches the failure a screenshot cannot show — a
+Fluent token reaching `fillStyle` unresolved, where a 2D context silently ignores it and keeps the
+previous fill.
+
+`npm run preview:details` serves the page against fixtures if you want to look at it without a tenant.
+
 ### Why named screens, not generic components
 
 The canvas exposes `show_agent_inventory` / `show_risky_agents` / `filter_agent_inventory` and the
@@ -219,6 +255,7 @@ To use your own app registration instead, set `SECURITY_CANVAS_CLIENT_ID` or wri
 | Tool | Purpose |
 |---|---|
 | `list_agents` | The whole agent estate across every Microsoft platform. Answers "what are my agents?". |
+| `get_agent_details` | Everything known about **one** agent: identity facts, the secure score and the goals it fails, its Conditional Access / Defender / Purview DLP posture, and what it can reach. Answers "tell me more about X". |
 | `get_protect_agents_playbook` | The agent-scoped DLP playbook. Defaults to guided steps for the user to run; `mode: "auto"` returns one script for the agent to run, and must be asked for. |
 | `get_agent_estate_summary` | Tenant totals: counts by risk level, by platform, and coverage gaps. |
 | `list_risky_agents` | Triage-ordered list of Entra-flagged agents, with composite scores. The portable peer of the `show_risky_agents` canvas action — in the Copilot app the canvas puts the same agents on screen. |

@@ -14,6 +14,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { AgentRepository } from "../features/risky-agents/data/agent-repository.mjs";
 import { registerTools } from "../features/risky-agents/tools/mcp-tools.mjs";
+import { registerDetailsTools } from "../features/agent-details/tools/mcp-tools.mjs";
 
 // --- Fake tenant -----------------------------------------------------------
 const AGENTS = [
@@ -77,6 +78,49 @@ const graphStub = {
 	confirmAgentSafe: async () => {},
 };
 
+/**
+ * The inventory side of the fake tenant.
+ *
+ * Deliberately shaped to exercise the distinction the whole feature turns on:
+ * `dlp: false` was evaluated and failed, `defender: null` was never evaluated,
+ * and only the first is allowed to appear as a finding.
+ */
+const DETAIL_ROW = {
+	agentId: "76d5b313-ab72-f111-ab0d-70a8a59be404",
+	title: "ira-test-agent",
+	publisher: "",
+	platform: "Copilot Studio",
+	appType: "thirdParty",
+	source: "registered",
+	status: "Active",
+	owner: "Ira",
+	riskLevel: "medium",
+	publiclyExposed: null,
+	unmonitored: true,
+	lastActivity: null,
+	protection: { defender: null, dlp: false },
+	blastRadius: { available: true },
+	identity: { servicePrincipalId: "sp-ira-1", userId: null, coverageTarget: "servicePrincipal" },
+};
+
+/** A stub at the port, so every layer above it is the production code path. */
+const detailsSource = {
+	getAgentRow: async (id) => (id.toLowerCase() === DETAIL_ROW.agentId ? DETAIL_ROW : null),
+	getAgentDetail: async () => ({
+		agentId: DETAIL_ROW.agentId,
+		blastRadius: {
+			total: 2,
+			byCategory: [
+				{ label: "group", count: 1, resources: [{ name: "Finance readers" }] },
+				{ label: "serviceprincipal", count: 1, resources: [{ name: "Payments API", criticalityLevel: 3 }] },
+			],
+		},
+		reachability: [],
+		agentDetails: { owners: ["Ira", "Sam Reed"], entraAgentId: DETAIL_ROW.agentId },
+	}),
+	getAgentExposure: async () => null,
+};
+
 // --- Harness ---------------------------------------------------------------
 let failures = 0;
 const check = (label, cond, detail = "") => {
@@ -90,6 +134,7 @@ const check = (label, cond, detail = "") => {
 
 const server = new McpServer({ name: "security-canvas", version: "0.1.0" });
 registerTools(server, new AgentRepository(graphStub));
+registerDetailsTools(server, { repository: detailsSource });
 
 const client = new Client({ name: "smoke", version: "1.0.0" });
 const [clientT, serverT] = InMemoryTransport.createLinkedPair();
@@ -100,10 +145,12 @@ console.log("\ntools/list");
 const { tools } = await client.listTools();
 const names = tools.map((t) => t.name).sort();
 console.log(`  registered: ${names.join(", ")}`);
-check("all 5 tools registered", names.length === 5);
+check("all 6 tools registered", names.length === 6);
 check(
 	"read tools marked readOnlyHint",
-	tools.filter((t) => t.name.startsWith("list_") || t.name.startsWith("explain_")).every((t) => t.annotations?.readOnlyHint === true),
+	tools
+		.filter((t) => t.name.startsWith("list_") || t.name.startsWith("explain_") || t.name.startsWith("get_"))
+		.every((t) => t.annotations?.readOnlyHint === true),
 );
 check(
 	"write tool marked destructiveHint",
@@ -207,6 +254,47 @@ const bad = await client
 	.callTool({ name: "update_agent_risk_state", arguments: { agentIds: [], action: "nope", confirm: true } })
 	.catch((e) => ({ isError: true, message: e.message }));
 check("rejects invalid enum + empty array", bad.isError === true);
+
+// --- 7. Agent details ------------------------------------------------------
+console.log('\nget_agent_details  ("tell me more about this agent")');
+const detailed = await client.callTool({
+	name: "get_agent_details",
+	arguments: { agentId: DETAIL_ROW.agentId },
+});
+console.log(
+	detailed.content[0].text
+		.split("\n")
+		.map((l) => `  │ ${l}`)
+		.join("\n"),
+);
+const text = detailed.content[0].text;
+const summary = detailed.structuredContent;
+
+check("resolves the agent", detailed.isError !== true);
+check("states an unanswered fact rather than dropping it", /Publisher: not available/.test(text));
+check("reports an unanswered fact as null, never as a value", summary.facts.publisher === null);
+check("names the measured DLP gap as a finding", /Not yet protected by Microsoft Purview DLP/.test(text));
+check(
+	"never mentions the control that was never evaluated",
+	!/Defender/.test(text.split("Posture:")[1].split("Unmet security goals")[0]),
+);
+check("keeps unevaluated goals out of the unmet list", summary.unmetGoals.every((g) => !/Defender/.test(g)));
+check("lists the unevaluated goals separately", summary.notEvaluated.length > 0);
+check(
+	"warns the model not to read those as gaps",
+	/NOT the same as unprotected/.test(text),
+);
+check("explains a zero permission count", /no delegated grants were collected/.test(text));
+check("reports the service's resource total", summary.access.resources === 2);
+check("carries the graph as counts, not as positions", summary.graph.nodes > 0 && !summary.accessGraph);
+
+console.log("\nget_agent_details  (unknown id)");
+const missing = await client.callTool({ name: "get_agent_details", arguments: { agentId: "no-such-agent" } });
+check("reports a miss as an error", missing.isError === true);
+check(
+	"states the weaker claim, not 'no such agent'",
+	/No inventory row/.test(missing.content[0].text) && !/does not exist/.test(missing.content[0].text),
+);
 
 console.log(`\n${failures === 0 ? "ALL CHECKS PASSED" : `${failures} CHECK(S) FAILED`}`);
 await client.close();

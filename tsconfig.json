@@ -29,13 +29,15 @@
   // loosely-typed JSON that crosses a wire — MCP protocol responses, SSE frames,
   // hand-written tenant fixtures — and annotating every one would obscure what
   // they assert. They earn their keep by running:
-  //   test/e2e-smoke.mjs     npm run test:e2e    real MCP protocol
-  //   test/panel-smoke.mjs   npm run test:panel  the real Agents panel over HTTP
-  //   test/panel-preview.mjs npm run preview     the panel on fixtures, to look at
+  //   test/e2e-smoke.mjs       npm run test:e2e         real MCP protocol
+  //   test/panel-smoke.mjs     npm run test:panel       the real Agents panel over HTTP
+  //   test/panel-preview.mjs   npm run preview          the panel on fixtures, to look at
+  //   test/details-preview.mjs npm run preview:details  the details page on fixtures
   "exclude": [
     "node_modules",
     "test/e2e-smoke.mjs",
     "test/panel-smoke.mjs",
-    "test/panel-preview.mjs"
+    "test/panel-preview.mjs",
+    "test/details-preview.mjs"
   ]
 }

@@ -22,7 +22,8 @@
     "inspect": "npx @modelcontextprotocol/inspector node mcp.mjs",
     "test:e2e": "node test/e2e-smoke.mjs",
     "test:panel": "node test/panel-smoke.mjs",
-    "preview": "node test/panel-preview.mjs --risky"
+    "preview": "node test/panel-preview.mjs --risky",
+    "preview:details": "node test/details-preview.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
