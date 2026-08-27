@@ -1,13 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { InventoryStore } from "../features/agent-inventory/usecases/store.mjs";
 import * as inventory from "../features/agent-inventory/usecases/inventory-browse.mjs";
+import { createInventoryActions, requestInvestigation } from "../features/agent-inventory/tools/canvas-actions.mjs";
 import { InventoryError } from "../platform/inventory-client.mjs";
 import { agentTable, initials, meterCell, statusCell } from "../features/agent-inventory/components/agent-table.mjs";
 import { metricCard, sharePercent } from "../features/agent-inventory/components/metric-card.mjs";
 import { filterBar, pager } from "../features/agent-inventory/components/filter-bar.mjs";
+import { emptyMessage } from "../features/agent-inventory/domain/presentation.mjs";
 import type {
 	AgentCatalog,
 	InventoryAgent,
+	InventoryFilters,
 	InventorySource,
 	InventorySummary,
 } from "../features/agent-inventory/domain/types.js";
@@ -248,6 +251,31 @@ describe("agent table rendering", () => {
 		const html = agentTable([], { column: "name", descending: false });
 		expect(html).toContain("No agents match these filters.");
 	});
+
+	it("carries a caller-supplied empty message", () => {
+		const html = agentTable([], { column: "name", descending: false }, "Nothing to triage.");
+		expect(html).toContain("Nothing to triage.");
+		expect(html).not.toContain("No agents match these filters.");
+	});
+
+	it("escapes the empty message, since it names filter values", () => {
+		const html = agentTable([], { column: "name", descending: false }, "<script>alert(1)</script>");
+		expect(html).not.toContain("<script>");
+	});
+
+	it("makes a row an activatable control, not just a clickable area", () => {
+		// Rows hand the agent to the model to investigate. A row that only
+		// responds to a mouse would strand keyboard users on a focusable thing
+		// that does nothing.
+		const html = agentTable([agent({ agentId: "a-1", title: "Invoice Bot" })], {
+			column: "name",
+			descending: false,
+		});
+		expect(html).toContain('data-agent-id="a-1"');
+		expect(html).toContain('role="button"');
+		expect(html).toContain('tabindex="0"');
+		expect(html).toContain('aria-label="Investigate Invoice Bot"');
+	});
 });
 
 describe("meterCell", () => {
@@ -350,5 +378,174 @@ describe("pager", () => {
 	it("disables the edges", () => {
 		expect(pager(0, 3)).toMatch(/data-page="prev"\s+disabled/);
 		expect(pager(2, 3)).toMatch(/data-page="next"\s+disabled/);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Risky agents — the view that replaced the Security Canvas
+// ---------------------------------------------------------------------------
+
+/** Find one action by name, failing loudly rather than yielding undefined. */
+function action(ctx: Parameters<typeof createInventoryActions>[0], name: string) {
+	const found = createInventoryActions(ctx).find((a) => a.name === name);
+	if (!found) throw new Error(`No action named ${name}`);
+	return found;
+}
+
+function actionCtx(agents: InventoryAgent[] = [agent()], send = vi.fn()) {
+	return {
+		store: new InventoryStore(),
+		repository: stubRepository(agents),
+		getSession: () => ({ send }),
+	};
+}
+
+describe("show_risky_agents", () => {
+	it("narrows to the risky bands, worst first", async () => {
+		const c = actionCtx();
+		await action(c, "show_risky_agents").handler({ input: {} } as never);
+
+		expect(c.store.get().filters.risks).toEqual(["high", "medium"]);
+		expect(c.store.get().sort).toEqual({ column: "risk", descending: false });
+	});
+
+	it("clears an existing filter rather than intersecting with it", async () => {
+		// Asking for the risky agents after searching for "invoice" should show
+		// the risky agents, not the risky agents also called invoice.
+		const c = actionCtx();
+		c.store.setFilters({ search: "invoice", platforms: ["Endpoint"], slice: "unowned" });
+		await action(c, "show_risky_agents").handler({ input: {} } as never);
+
+		const { filters } = c.store.get();
+		expect(filters.search).toBe("");
+		expect(filters.platforms).toEqual([]);
+		expect(filters.slice).toBe("all");
+	});
+
+	it("honours an explicit set of levels", async () => {
+		const c = actionCtx();
+		await action(c, "show_risky_agents").handler({ input: { levels: ["high"] } } as never);
+		expect(c.store.get().filters.risks).toEqual(["high"]);
+	});
+
+	it("falls back to the default when the model invents a band", async () => {
+		// Storing "severe" would match no rows and blank the table with no
+		// visible reason, which reads as a broken filter.
+		const c = actionCtx();
+		await action(c, "show_risky_agents").handler({ input: { levels: ["severe"] } } as never);
+		expect(c.store.get().filters.risks).toEqual(["high", "medium"]);
+	});
+
+	it("loads the estate first when the panel was never opened", async () => {
+		const c = actionCtx();
+		await action(c, "show_risky_agents").handler({ input: {} } as never);
+		expect(c.repository.listAgents).toHaveBeenCalled();
+	});
+});
+
+describe("filter_agent_inventory", () => {
+	it("drops an unrecognized slice instead of blanking the table", async () => {
+		const c = actionCtx();
+		await action(c, "filter_agent_inventory").handler({ input: { slice: "nonsense" } } as never);
+		expect(c.store.get().filters.slice).toBe("all");
+	});
+});
+
+describe("emptyMessage", () => {
+	const base = (): InventoryFilters => ({ search: "", platforms: [], risks: [], slice: "all" });
+
+	it("reports a clean tenant as good news, not as a failed filter", () => {
+		// "No agents match these filters" reads as "try again"; the reader asked
+		// whether anything needs triage and the answer is no.
+		const msg = emptyMessage({ ...base(), risks: ["high", "medium"] });
+		expect(msg).toMatch(/no agents are currently at high or medium risk/i);
+		expect(msg).toMatch(/nothing to triage/i);
+	});
+
+	it("reads naturally for a single band", () => {
+		expect(emptyMessage({ ...base(), risks: ["high"] })).toMatch(/at high risk/);
+	});
+
+	it("stays a filter message when something else is also narrowing", () => {
+		// With a search term active, "no risky agents" would be a claim about
+		// the whole tenant made from a narrowed view.
+		expect(emptyMessage({ ...base(), risks: ["high"], search: "invoice" })).toBe(
+			"No agents match these filters.",
+		);
+		expect(emptyMessage({ ...base(), risks: ["high"], platforms: ["Endpoint"] })).toBe(
+			"No agents match these filters.",
+		);
+	});
+
+	it("stays a filter message when no risk filter is active", () => {
+		expect(emptyMessage(base())).toBe("No agents match these filters.");
+	});
+});
+
+describe("requestInvestigation", () => {
+	it("hands the row's facts to the model and points it at the detail tool", async () => {
+		const send = vi.fn();
+		const c = actionCtx([agent({ agentId: "a-1", title: "Invoice Bot", riskLevel: "high" })], send);
+		await inventory.refreshInventory(c);
+
+		expect(requestInvestigation(c, "a-1")).toBe(true);
+		const { prompt } = send.mock.calls[0]![0];
+		expect(prompt).toContain("Invoice Bot");
+		expect(prompt).toContain("a-1");
+		expect(prompt).toContain("risk: high");
+		// The row carries no detection history, so the model must be sent for it
+		// rather than inferring reasons from the level alone.
+		expect(prompt).toContain("explain_agent_risk");
+		expect(prompt).toMatch(/not change the agent's risk state without asking/i);
+	});
+
+	it("names the absence when an agent has no owner", async () => {
+		const send = vi.fn();
+		const c = actionCtx([agent({ agentId: "a-1", owner: null })], send);
+		await inventory.refreshInventory(c);
+		requestInvestigation(c, "a-1");
+
+		expect(send.mock.calls[0]![0].prompt).toContain("unassigned");
+	});
+
+	it("says exposure was not evaluated rather than implying it is safe", async () => {
+		const send = vi.fn();
+		const c = actionCtx([agent({ agentId: "a-1", publiclyExposed: null })], send);
+		await inventory.refreshInventory(c);
+		requestInvestigation(c, "a-1");
+
+		expect(send.mock.calls[0]![0].prompt).toContain("exposure not evaluated");
+	});
+
+	it("ignores a stale click for an agent that left the table", async () => {
+		const send = vi.fn();
+		const c = actionCtx([agent({ agentId: "a-1" })], send);
+		await inventory.refreshInventory(c);
+
+		expect(requestInvestigation(c, "gone")).toBe(false);
+		expect(send).not.toHaveBeenCalled();
+	});
+});
+
+describe("connect", () => {
+	it("shows what it is waiting on during the browser round-trip", async () => {
+		const c = actionCtx();
+		const seen: string[] = [];
+		c.store.subscribe((s) => seen.push(s.note));
+		await inventory.connect(c);
+
+		expect(seen[0]).toMatch(/waiting for sign-in/i);
+		expect(c.store.get().status).toBe("connected");
+	});
+
+	it("reports a failed sign-in instead of hanging on the spinner", async () => {
+		const { signIn } = await import("../platform/auth.mjs");
+		vi.mocked(signIn).mockRejectedValueOnce(new Error("State mismatch on sign-in callback."));
+
+		const c = actionCtx();
+		await inventory.connect(c);
+
+		expect(c.store.get().status).toBe("error");
+		expect(c.store.get().note).toMatch(/State mismatch/);
 	});
 });

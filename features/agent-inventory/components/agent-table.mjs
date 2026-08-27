@@ -145,6 +145,11 @@ export function unknownCell(label = NO_ACTIVITY_LABEL) {
 
 /**
  * One table row.
+ *
+ * The row is a button in all but name: clicking it hands the agent to the model
+ * to investigate. `tabindex` plus an explicit label is what keeps that reachable
+ * from the keyboard and announced as an action rather than as seven cells.
+ *
  * @param {InventoryAgent} agent
  * @returns {string}
  */
@@ -152,7 +157,12 @@ export function agentRow(agent) {
 	const used = lastUsedLabel(agent);
 	const band = agent.riskLevel ?? "none";
 
-	return `<tr data-agent-id="${esc(agent.agentId)}" tabindex="0">
+	return `<tr
+    data-agent-id="${esc(agent.agentId)}"
+    tabindex="0"
+    role="button"
+    aria-label="Investigate ${esc(agent.title)}"
+  >
     <td>${titleCell(agent)}</td>
     <td class="cell-text">${esc(discoveryLabel(agent.source))}</td>
     <td class="cell-text">${esc(agent.platform)}</td>
@@ -182,9 +192,10 @@ export const COLUMNS = [
  *
  * @param {readonly InventoryAgent[]} rows
  * @param {import("../domain/types.js").InventorySort} sort
+ * @param {string} [emptyMessage] What to say when nothing matched.
  * @returns {string}
  */
-export function agentTable(rows, sort) {
+export function agentTable(rows, sort, emptyMessage = "No agents match these filters.") {
 	const headers = COLUMNS.map((col) => {
 		const active = sort.column === col.id;
 		const ariaSort = active ? (sort.descending ? "descending" : "ascending") : "none";
@@ -198,7 +209,7 @@ export function agentTable(rows, sort) {
 
 	const body = rows.length
 		? rows.map(agentRow).join("")
-		: `<tr><td colspan="${COLUMNS.length}" class="empty-row">No agents match these filters.</td></tr>`;
+		: `<tr><td colspan="${COLUMNS.length}" class="empty-row">${esc(emptyMessage)}</td></tr>`;
 
 	return `<table class="agent-table">
     <thead><tr>${headers}</tr></thead>

@@ -2,9 +2,13 @@
  * Domain types for the risky-agents feature.
  *
  * Declarations only — this file emits no runtime code, so it can be shared by
- * every layer without adding a single byte to what ships to the canvas.
+ * every layer without adding a single byte to what ships.
  * Runtime modules reference these through JSDoc `@typedef {import(...)}`,
  * which `tsc --checkJs` enforces exactly like a `.ts` annotation.
+ *
+ * This feature owns no screen, so there are no canvas-state types here. The
+ * agent list is the Agents table; what lives in this feature is the scored
+ * explanation behind a risk level, reached through the MCP tools.
  *
  * Graph schema source (verified 2026-08):
  *   /beta/identityProtection/riskyAgents          -> RiskyAgent
@@ -209,27 +213,3 @@ export interface AgentSource {
 
 /** The risk-state transitions Entra ID Protection accepts. */
 export type RiskStateAction = "dismiss" | "confirmCompromised" | "confirmSafe";
-
-// ---------------------------------------------------------------------------
-// Canvas state — the contract between the Node side and the browser side.
-// ---------------------------------------------------------------------------
-
-/** Connection lifecycle of the canvas. */
-export type CanvasStatus = "loading" | "needs-config" | "needs-auth" | "signing-in" | "error" | "connected";
-
-/** Which screen the canvas is showing, and what it is showing it for. */
-export interface Route {
-	view: string;
-	params: Record<string, unknown>;
-}
-
-/** Serialized in full over SSE on every change. Must stay JSON-safe. */
-export interface CanvasState {
-	status: CanvasStatus;
-	note: string;
-	hint: string;
-	route: Route;
-	assessments: AgentRiskAssessment[];
-	selectedId: string | null;
-	lastRefresh: string | null;
-}
