@@ -17,6 +17,8 @@ import { AgentRepository } from "./features/risky-agents/data/agent-repository.m
 import { registerTools } from "./features/risky-agents/tools/mcp-tools.mjs";
 import { InventoryRepository } from "./features/agent-inventory/data/inventory-repository.mjs";
 import { registerInventoryTools } from "./features/agent-inventory/tools/mcp-tools.mjs";
+import { PlaybookStore } from "./features/purview-protection/usecases/store.mjs";
+import { registerPlaybookTools } from "./features/purview-protection/tools/playbook-tools.mjs";
 
 async function main() {
 	const server = new McpServer(
@@ -29,13 +31,21 @@ async function main() {
 				"For security triage start with list_risky_agents to find flagged Entra agent identities, then " +
 				"explain_agent_risk for a single agent's detection history, and assess_agent_blast_radius to weigh " +
 				"identity risk against data and code exposure.\n\n" +
+				"To protect agents from leaking sensitive data, call get_protect_agents_playbook. It returns " +
+				"PowerShell for the USER to run in their own session — Purview has no API for agent-scoped DLP. " +
+				"Present those commands step by step and never execute them.\n\n" +
 				"All read tools respect the signed-in analyst's Entra RBAC. " +
 				"update_agent_risk_state changes security posture: always confirm with the user first.",
 		},
 	);
 
+	// One inventory repository, shared: the playbook's coverage numbers and the
+	// Agents tools must describe the same estate.
+	const inventoryRepository = new InventoryRepository();
+
 	registerTools(server, new AgentRepository());
-	registerInventoryTools(server, new InventoryRepository());
+	registerInventoryTools(server, inventoryRepository);
+	registerPlaybookTools(server, { store: new PlaybookStore(), repository: inventoryRepository });
 
 	await server.connect(new StdioServerTransport());
 	process.stderr.write("[security-canvas] MCP server ready on stdio\n");

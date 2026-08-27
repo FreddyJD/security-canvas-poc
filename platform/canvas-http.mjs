@@ -59,7 +59,7 @@ const BROWSER_SAFE_LAYERS = new Set(["components", "views", "domain"]);
  * Deliberately tiny, and adding to it is a security decision: everything here
  * is readable by anything that can reach the loopback port.
  */
-const BROWSER_SAFE_PLATFORM = new Set(["html.mjs", "design-tokens.mjs"]);
+const BROWSER_SAFE_PLATFORM = new Set(["html.mjs", "design-tokens.mjs", "theme-toggle.mjs"]);
 
 /**
  * Serve a browser-side module from a root directory.

@@ -27,6 +27,7 @@ describe("isBrowserModule", () => {
 	it("serves only the platform modules built for a browser", () => {
 		expect(isBrowserModule("platform/html.mjs")).toBe(true);
 		expect(isBrowserModule("platform/design-tokens.mjs")).toBe(true);
+		expect(isBrowserModule("platform/theme-toggle.mjs")).toBe(true);
 	});
 
 	it("refuses the credential-bearing platform modules", () => {

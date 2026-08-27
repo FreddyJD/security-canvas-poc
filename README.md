@@ -33,6 +33,7 @@ composition roots.
 |---|---|---|
 | `agent-inventory` | "What are my agents?" | ZTAI unified inventory (`/rp/zerotrustai`) — the estate across M365 Copilot, Copilot Studio, Endpoint |
 | `risky-agents` | "What needs triage?" | Entra ID Protection (`/beta/identityProtection`) — identity risk, scored cross-pillar |
+| `purview-protection` | "Protect my sensitive data" | None — Purview has no API for this, so it hands the operator a script (see below) |
 
 Both use the same layering:
 
@@ -78,6 +79,38 @@ radii are what make a page look like Fluent, and those are just values.
 They're emitted as CSS custom properties under `:root` and `[data-theme="dark"]`, so switching
 theme is one attribute flip: no re-render, no stylesheet swap, no flash. An inline script in the
 shell sets it from `localStorage` or `prefers-color-scheme` before first paint.
+
+### Playbooks: when there is no API to call
+
+Purview cannot express agent-scoped DLP through its portal, and has no public REST API for it.
+The scoping is carried by `EndpointDlpRestrictions`, which only Security & Compliance PowerShell
+can set. There is nothing to call.
+
+So `purview-protection` does not pretend to act. It builds the exact commands, explains what each
+one changes, and hands them back to the Copilot session as instructions — the operator runs them
+in their own authenticated shell. The canvas holds the sequence and the progress; the human holds
+the credentials. That is the honest shape for this problem, and it is what a canvas is genuinely
+better at than a chat reply: it survives across turns, so you can run step 4, come back, and see
+where you were.
+
+A playbook is **data** — [`domain/protect-agents-playbook.mjs`](features/purview-protection/domain/protect-agents-playbook.mjs)
+is a definition plus one script builder. Adding a second playbook is a file and a registration,
+not a new screen.
+
+Two things it is deliberately careful about:
+
+- **Parameters are allowlisted, not escaped.** A SIT name is interpolated into a command a tenant
+  administrator then runs. PowerShell has too many quoting contexts to escape reliably, so
+  [`domain/validate.mjs`](features/purview-protection/domain/validate.mjs) rejects anything outside
+  `[A-Za-z0-9 _.-]` and the script is never produced. `x"; Remove-DlpCompliancePolicy ...` does not
+  get a chance to be clever.
+- **Every surface says "present, do not execute".** A block of PowerShell in a tool result reads to
+  a model like a task. The prompt, the tool description and the tool output each state that the
+  user runs these — because the failure mode is a model helpfully rewriting your tenant's DLP policy.
+
+Progress is worded as a claim throughout ("I ran this", "3 of 8 steps marked done"). Nothing here
+can see the operator's terminal, so the only evidence that the protection is real is re-reading
+coverage afterwards — which is what the last step asks for.
 
 ### Why a view registry, not generic components
 
@@ -136,6 +169,7 @@ To use your own app registration instead, set `SECURITY_CANVAS_CLIENT_ID` or wri
 | Tool | Purpose |
 |---|---|
 | `list_agents` | The whole agent estate across every Microsoft platform. Answers "what are my agents?". |
+| `get_protect_agents_playbook` | The agent-scoped DLP playbook: steps plus the exact PowerShell for the user to run. |
 | `get_agent_estate_summary` | Tenant totals: counts by risk level, by platform, and coverage gaps. |
 | `list_risky_agents` | Triage-ordered list of Entra-flagged agents. The security entry point. |
 | `explain_agent_risk` | One agent's detection history in plain language, with remediation. |
@@ -195,7 +229,7 @@ reasoned, not empirical.
 ```bash
 npm install       # only the MCP SDK + zod; the canvas itself needs no deps
 
-npm test          # 177 unit tests
+npm test          # 235 unit tests
 npm run typecheck # tsc --noEmit over JSDoc-annotated ESM
 npm run test:e2e  # real MCP protocol against a fake tenant, no credentials needed
 npm run inspect   # browse tools in the MCP Inspector
@@ -256,6 +290,16 @@ features/agent-inventory/        "what are my agents?" -- the ZTAI unified estat
   views/        inventory-screen.mjs · inventory-server.mjs · client.mjs · styles.mjs
   tools/        canvas-actions.mjs · mcp-tools.mjs
 
+features/purview-protection/     "protect my sensitive data" -- a PowerShell playbook
+  domain/       types.d.ts       playbook, step and coverage contracts
+                protect-agents-playbook.mjs  the playbook AS DATA -- add one here
+                validate.mjs     allowlist for values that reach a privileged shell
+                coverage.mjs     DLP coverage over the estate (tri-state, never inferred)
+  usecases/     run-playbook.mjs · store.mjs
+  components/   playbook-steps.mjs
+  views/        playbook-screen.mjs · playbook-server.mjs · client.mjs · styles.mjs
+  tools/        playbook-tools.mjs
+
 features/risky-agents/           "what needs triage?" -- Entra identity risk
   domain/       types.d.ts       shared contracts, incl. the AgentSource port
                 scoring.mjs      the scoring engine — the actual product
@@ -282,9 +326,11 @@ platform/       graph.mjs        Graph client — token provider injected
                 config.mjs       disk-first config (the app has no shell env)
                 canvas-http.mjs  shared panel plumbing + the browser-module allowlist
                 design-tokens.mjs  Fluent light/dark tokens as CSS custom properties
-                html.mjs         esc() — the one escaping boundary, shared by both
+                theme-toggle.mjs   light/dark switching, shared by every panel
+                html.mjs         esc() — the one escaping boundary, shared by all
 
-test/           scoring.test.ts               37 — scoring properties + live-data regressions
+test/           purview-playbook.test.ts      58 — injection defence, playbook shape, coverage
+                scoring.test.ts               37 — scoring properties + live-data regressions
                 inventory-browse.test.ts      35 — use cases, paging, and every component
                 inventory-presentation.test.ts 31 — labels, filters, sort stability
                 components.test.ts            22 — rendering, escaping, routing

@@ -4,13 +4,16 @@
  * Composition root and nothing else: build the dependencies, declare the
  * canvases, wire the actions. Every behaviour lives under features/.
  *
- * Two canvases, one estate:
+ * Three canvases, one estate:
  *   Agents          the whole inventory across every Microsoft agent plane
  *   Security Canvas the Entra identity-risk triage queue over the same agents
+ *   Protect agents  a playbook that hands the operator the exact PowerShell
+ *                   Purview requires, because it has no API for agent scoping
  *
  * They are separate surfaces rather than tabs because they answer different
- * questions and the model routes to them by name — "what are my agents?" and
- * "what needs triage?" should not land on the same screen.
+ * questions and the model routes to them by name — "what are my agents?",
+ * "what needs triage?" and "protect my sensitive data" should not land on the
+ * same screen.
  *
  * Must stay at the repository root: a whole-repo plugin install lands the
  * entrypoint at ~/.copilot/extensions/<name>/extension.mjs, exactly one level
@@ -25,6 +28,11 @@ import { CanvasStore } from "./features/risky-agents/usecases/store.mjs";
 import { createCanvasActions } from "./features/risky-agents/tools/canvas-actions.mjs";
 import * as triage from "./features/risky-agents/usecases/agent-triage.mjs";
 import { startCanvasServer } from "./features/risky-agents/views/canvas-server.mjs";
+
+import { PlaybookStore } from "./features/purview-protection/usecases/store.mjs";
+import { createPlaybookActions } from "./features/purview-protection/tools/playbook-tools.mjs";
+import * as playbook from "./features/purview-protection/usecases/run-playbook.mjs";
+import { startPlaybookServer } from "./features/purview-protection/views/playbook-server.mjs";
 
 import { InventoryRepository } from "./features/agent-inventory/data/inventory-repository.mjs";
 import { InventoryStore } from "./features/agent-inventory/usecases/store.mjs";
@@ -42,8 +50,13 @@ const getSession = () => session;
 const triageCtx = { store: new CanvasStore(), repository: new AgentRepository(), getSession };
 const inventoryCtx = { store: new InventoryStore(), repository: new InventoryRepository(), getSession };
 
+// The playbook reads DLP coverage from the same inventory the Agents panel
+// shows, so it shares that repository rather than opening its own client.
+const playbookCtx = { store: new PlaybookStore(), repository: inventoryCtx.repository, getSession };
+
 const triagePanel = await startCanvasServer(triageCtx);
 const inventoryPanel = await startInventoryServer(inventoryCtx);
+const playbookPanel = await startPlaybookServer(playbookCtx);
 
 const agentsCanvas = createCanvas({
 	id: "agent-inventory",
@@ -95,8 +108,32 @@ const securityCanvas = createCanvas({
 	onClose: async () => triagePanel.close(),
 });
 
-session = await joinSession({ canvases: [agentsCanvas, securityCanvas] });
+const protectCanvas = createCanvas({
+	id: "purview-protection",
+	displayName: "Protect agents",
+	description:
+		"A playbook for blocking AI agents from reading sensitive data, using an agent-scoped Microsoft Purview " +
+		"DLP policy. Returns the exact PowerShell for the user to run — Purview has no API for agent scoping.",
 
-// Warm both in the background so the first open of either is instant.
+	actions: createPlaybookActions(playbookCtx),
+
+	open: async () => {
+		if (!playbookCtx.store.get().coverage) {
+			playbook.refreshCoverage(playbookCtx).catch(() => {});
+		}
+		const { coverage } = playbookCtx.store.get();
+		return {
+			url: `http://127.0.0.1:${playbookPanel.port}`,
+			title: "Protect agents",
+			status: coverage && coverage.uncovered > 0 ? `${coverage.uncovered} uncovered` : "playbook",
+		};
+	},
+
+	onClose: async () => playbookPanel.close(),
+});
+
+session = await joinSession({ canvases: [agentsCanvas, securityCanvas, protectCanvas] });
+
+// Warm in the background so the first open of any panel is instant.
 inventory.refreshInventory(inventoryCtx).catch(() => {});
 triage.refreshQueue(triageCtx).catch(() => {});
