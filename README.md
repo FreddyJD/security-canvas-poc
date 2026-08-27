@@ -87,8 +87,8 @@ If your tenant does not have one yet, a Global Administrator runs:
 
 ```bash
 # 1. Register a public client app
-az ad app create --display-name "Security Canvas" \\
-  --is-fallback-public-client true \\
+az ad app create --display-name "Security Canvas" \
+  --is-fallback-public-client true \
   --required-resource-accesses '[{
     "resourceAppId": "00000003-0000-0000-c000-000000000000",
     "resourceAccess": [
