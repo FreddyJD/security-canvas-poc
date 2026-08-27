@@ -27,8 +27,17 @@ import { nodeVisibility } from "../domain/map-layout.mjs";
 import { paintDotGrid, withAlpha } from "./map-canvas.mjs";
 import { drawGlyph, glyphForKind } from "./map-glyphs.mjs";
 
-/** The font stack canvas text is set in, matching the panel's own. */
-const FONT_STACK = "'Segoe UI', system-ui, -apple-system, sans-serif";
+/**
+ * The font stack canvas text is set in, matching the panel's own.
+ *
+ * Lithium's `fontFamilyBase`, spelled out rather than read from the custom
+ * property: `ctx.font` takes a CSS *shorthand*, and a `var()` inside one is not
+ * substituted — the assignment is rejected wholesale and the context keeps its
+ * previous font, which is a 10px sans-serif nothing on the page matches. The
+ * one value that must stay in sync with the token is the first family, since
+ * that is the one that will actually resolve.
+ */
+const FONT_STACK = "'Segoe Sans', 'Segoe UI', 'Segoe UI Web (West European)', 'Helvetica Neue', 'Arial', sans-serif";
 
 /** Below this on-screen radius a node is a dot, and its label is noise. */
 const LABEL_MIN_RADIUS_PX = 9;
@@ -55,9 +64,18 @@ const SHIMMER_LIFT = 0.5;
  * The hue for a node kind.
  *
  * Deliberately a small closed table rather than a generated series: this map
- * has one taxonomy and the reader learns it once. Values are Fluent token
+ * has one taxonomy and the reader learns it once. Values are Lithium token
  * references, resolved through the ink at paint time — never used raw, because
  * a `var(--x)` string assigned to `fillStyle` is silently ignored.
+ *
+ * Every kind is a token, including the five that used to be literal hexes
+ * (`#a4262c` cloud, `#8764b8` app, `#986f0b` key, `#0e7a6d` document, `#0f6cbd`
+ * globe). A literal here is worse than elsewhere: the map is a *bitmap*, so
+ * nothing downstream can repair a colour that no longer suits the ground it is
+ * painted on — and those five had no dark twin, so they kept their light-theme
+ * value on a dark canvas. On Lithium's dark ground (`#0B1B31`) the old cloud
+ * red came to 2.38:1, under the 3:1 a non-text mark needs. The palette tokens
+ * carry a per-theme value and clear it.
  *
  * @type {Record<string, string>}
  */
@@ -66,11 +84,11 @@ export const KIND_COLOR = {
 	shield: "var(--colorStatusDangerBackground3)",
 	people: "var(--colorBrandForeground2)",
 	person: "var(--colorBrandForeground2)",
-	cloud: "#a4262c",
-	app: "#8764b8",
-	key: "#986f0b",
-	document: "#0e7a6d",
-	globe: "#0f6cbd",
+	cloud: "var(--colorPaletteRedBorderActive)",
+	app: "var(--colorPalettePurpleBorderActive)",
+	key: "var(--colorPaletteBrassBorderActive)",
+	document: "var(--colorPaletteTealBorderActive)",
+	globe: "var(--colorPaletteBlueBorderActive)",
 	warning: "var(--colorStatusWarningBorder2)",
 };
 

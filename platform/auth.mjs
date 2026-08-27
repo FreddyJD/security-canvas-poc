@@ -25,6 +25,8 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import http from "node:http";
 import { createHash, randomBytes } from "node:crypto";
 import { CACHE_FILE, CONFIG_DIR, GRAPH_BASE, SCOPES, getConfig } from "./config.mjs";
+import { themeDeclarations, themeVariables } from "./design-tokens.mjs";
+import { esc } from "./html.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -201,17 +203,38 @@ function openBrowser(url) {
 
 /**
  * Minimal page shown in the browser tab once the redirect lands.
+ *
+ * Themed from the same Lithium tokens as the canvas panels, because this is the
+ * *first* Microsoft surface a new user sees — it renders before any panel does,
+ * and a GitHub-dark sign-in page followed by a Lithium canvas reads as two
+ * different products.
+ *
+ * It inlines the token block rather than linking `/app.css`: this page is served
+ * by the throwaway loopback listener that exists only for the OAuth redirect, on
+ * a different origin from the canvas, and it is destroyed the moment the code is
+ * received. A stylesheet link would race that teardown and render unstyled.
+ *
+ * `prefers-color-scheme` rather than the canvas's `data-theme`: there is no
+ * `localStorage` on this origin to read the reader's choice from, and no toggle
+ * to offer on a tab that closes itself.
+ *
  * @param {string | null} error
  */
 function closingPage(error) {
 	const ok = !error;
-	return `<!doctype html><html><head><meta charset="utf-8"/><title>Security Canvas</title>
-<style>body{font:15px/1.6 ui-sans-serif,system-ui,-apple-system,sans-serif;background:#0d1117;
-color:#e6edf3;height:100vh;margin:0;display:flex;flex-direction:column;align-items:center;
-justify-content:center;gap:10px}h1{font-size:17px;font-weight:600}p{color:#8b949e;font-size:13px}
-.e{color:#f85149}</style></head><body>
+	return `<!doctype html><html lang="en"><head><meta charset="utf-8"/><title>Security Canvas</title>
+<style>${themeVariables()}
+@media (prefers-color-scheme: dark) { :root { ${themeDeclarations("dark")} } }
+body{font:var(--fontSizeBase300)/var(--lineHeightBase300) var(--fontFamilyBase);
+background:var(--canvas-page-background);color:var(--colorNeutralForeground1);
+height:100vh;margin:0;display:flex;flex-direction:column;align-items:center;
+justify-content:center;gap:var(--spacingVerticalS)}
+h1{font-size:var(--fontSizeBase500);font-weight:var(--fontWeightSemibold);margin:0}
+p{color:var(--colorNeutralForeground2);font-size:var(--fontSizeBase200);margin:0;
+max-width:32rem;text-align:center}
+.e{color:var(--colorStatusDangerForeground1)}</style></head><body>
 <h1 class="${ok ? "" : "e"}">${ok ? "Signed in" : "Sign-in failed"}</h1>
-<p>${ok ? "You can close this tab and return to Security Canvas." : String(error).slice(0, 300)}</p>
+<p>${ok ? "You can close this tab and return to Security Canvas." : esc(String(error).slice(0, 300))}</p>
 </body></html>`;
 }
 

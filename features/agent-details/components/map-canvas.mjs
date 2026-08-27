@@ -130,7 +130,7 @@ const INK_TOKENS = {
 	/** The face of a drawn object, which a glyph is painted onto. */
 	surface: "var(--colorNeutralBackground1)",
 	/** A glyph painted on that face. */
-	glyph: "#ffffff",
+	glyph: "var(--colorNeutralForegroundOnBrand)",
 	/** The ring marking the one selected object. */
 	selection: "var(--colorBrandStroke1)",
 };

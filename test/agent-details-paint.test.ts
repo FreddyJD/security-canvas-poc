@@ -67,16 +67,25 @@ function stubContext() {
 	return { ctx: ctx as unknown as CanvasRenderingContext2D, calls, fills, strokes, alphas };
 }
 
-/** Ink resolved the way the browser would, so a token never reaches the canvas. */
+/**
+ * Ink resolved the way the browser would, so a token never reaches the canvas.
+ *
+ * The values are Lithium's, resolved for light: `--colorNeutralStroke2`,
+ * `--colorNeutralStroke1`, `--colorNeutralForeground1`,
+ * `--colorNeutralBackground1`, `--colorNeutralForegroundOnBrand` and
+ * `--colorBrandStroke1` in that order. They are only ever compared against each
+ * other, so what matters is that they are seven *distinguishable* strings in
+ * `rgb()` form — the shape `getComputedStyle` returns.
+ */
 const ink = {
 	roles: {
-		grid: "rgb(224, 224, 224)",
-		link: "rgb(209, 209, 209)",
-		label: "rgb(36, 36, 36)",
+		grid: "rgb(217, 223, 232)",
+		link: "rgb(199, 209, 222)",
+		label: "rgb(27, 33, 45)",
 		labelHalo: "rgb(255, 255, 255)",
 		surface: "rgb(255, 255, 255)",
 		glyph: "rgb(255, 255, 255)",
-		selection: "rgb(15, 108, 189)",
+		selection: "rgb(0, 96, 202)",
 	},
 	forced: false,
 	// A stand-in for the live probe: every caller colour comes back resolved.

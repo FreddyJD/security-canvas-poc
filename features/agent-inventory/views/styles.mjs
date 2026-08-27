@@ -1,10 +1,10 @@
 /**
  * Styles for the Agents screen.
  *
- * Every value is a Fluent token custom property from
+ * Every value is a **Lithium** token custom property from
  * `platform/design-tokens.mjs`, never a literal — which is what makes the
  * light/dark switch a single attribute flip and keeps the palette identical to
- * the Security-UX Agents page.
+ * the Security-UX Unified UX POC.
  */
 import { TONE_MARK, TRACK_BACKGROUND, themeVariables } from "../../../platform/design-tokens.mjs";
 
@@ -27,9 +27,11 @@ body {
   font-size: var(--fontSizeBase300);
   line-height: var(--lineHeightBase300);
   color: var(--colorNeutralForeground1);
-  /* Background2, not Background1: the page is the ground the white cards and
-     the table sit on, so it has to be the step *behind* them. */
-  background: var(--colorNeutralBackground2);
+  /* Lithium's ground is a soft off-centre radial wash, not a flat fill — it is
+     what separates a Lithium surface from Fluent wearing Lithium's palette.
+     Composed from the theme's own gradient stops; see PAGE_BACKGROUND_PROPERTY.
+     Still the step *behind* the cards and the table, which sit on Background1. */
+  background: var(--canvas-page-background);
   height: 100vh;
   overflow: hidden;
 }
@@ -344,7 +346,7 @@ h1 {
 button.primary {
   padding: var(--spacingVerticalS) var(--spacingHorizontalXL);
   font: inherit; font-weight: var(--fontWeightSemibold);
-  color: #ffffff; background: var(--colorBrandBackground);
+  color: var(--colorNeutralForegroundOnBrand); background: var(--colorBrandBackground);
   border: none; border-radius: var(--borderRadiusMedium);
   cursor: pointer;
 }
