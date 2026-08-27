@@ -38,6 +38,18 @@ export type StepKind = "prerequisite" | "script" | "verify" | "note";
  */
 export type ExecutionMode = "guided" | "auto";
 
+/**
+ * Which pane the canvas is showing.
+ *
+ * Deliberately not folded into {@link ExecutionMode}. A mode is a contract the
+ * handoff and the MCP tools consume — it decides which prompt gets built and
+ * whether a runnable script is included. "Configure" answers none of those
+ * questions: there is no such thing as a configure handoff. Keeping it here
+ * means the settings pane can be a tab without every consumer of the mode
+ * growing a third case it has no answer for.
+ */
+export type PlaybookPanel = "configure" | ExecutionMode;
+
 /** A runnable block attached to a step. */
 export interface PlaybookScript {
 	/** Shell the block is written for. Drives the label and the copy hint. */
@@ -148,6 +160,12 @@ export interface PlaybookState {
 	params: Record<string, string>;
 	/** Guided by default: the safe mode is the one you get without asking. */
 	mode: ExecutionMode;
+	/**
+	 * Which pane is open. Starts on "guided" rather than "configure": the
+	 * parameters have working defaults, so the first thing on screen should be
+	 * the work, not a form.
+	 */
+	panel: PlaybookPanel;
 	progress: PlaybookProgress;
 	/** Null until the inventory has been read. */
 	coverage: DlpCoverage | null;

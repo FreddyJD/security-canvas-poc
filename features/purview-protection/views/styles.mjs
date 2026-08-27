@@ -59,32 +59,22 @@ h2 {
 .theme-toggle:hover { background: var(--colorSubtleBackgroundHover); color: var(--colorNeutralForeground1); }
 .theme-toggle svg { inline-size: 18px; block-size: 18px; }
 
+/* The shell no longer scrolls: it is the frame that holds a scrolling document
+   and a pinned action bar. Scrolling moved inward to .doc so the bar stays put
+   at the bottom of the viewport regardless of how long the script is. */
 .scroll {
+  flex: 1; min-height: 0; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+
+.doc {
   flex: 1; min-height: 0; overflow-y: auto;
   padding: 0 var(--spacingHorizontalXXL) var(--spacingVerticalXXL);
   display: flex; flex-direction: column; gap: var(--spacingVerticalL);
   max-width: 60rem;
+  /* Overscroll here must not chain to the shell and drag the bar around. */
+  overscroll-behavior: contain;
 }
-
-/* ----- coverage -------------------------------------------------------- */
-.coverage {
-  padding: var(--spacingVerticalM) var(--spacingHorizontalM);
-  background: var(--colorBrandBackground2);
-  border: var(--strokeWidthThin) solid var(--colorBrandStroke2);
-  border-radius: var(--borderRadiusXLarge);
-}
-.coverage-summary { font-weight: var(--fontWeightSemibold); }
-.coverage-stats { display: flex; gap: var(--spacingHorizontalL); margin-top: var(--spacingVerticalS); }
-.stat { font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground2); }
-.stat b {
-  display: block; font-size: var(--fontSizeBase500); line-height: var(--lineHeightBase500);
-  font-weight: var(--fontWeightBold); color: var(--colorNeutralForeground1);
-}
-.coverage-examples {
-  margin-top: var(--spacingVerticalS);
-  font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground2);
-}
-.dim { color: var(--colorNeutralForeground3); }
 
 /* ----- intro ----------------------------------------------------------- */
 .intro { display: flex; flex-direction: column; gap: var(--spacingVerticalS); }
@@ -110,6 +100,7 @@ h2 {
 }
 
 /* ----- params ---------------------------------------------------------- */
+.params { display: flex; flex-direction: column; gap: var(--spacingVerticalM); }
 .param-grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
   gap: var(--spacingHorizontalM);
@@ -135,23 +126,91 @@ h2 {
 }
 .param-help { font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground3); }
 
-/* ----- mode ------------------------------------------------------------ */
-.mode { display: grid; grid-template-columns: 1fr 1fr; gap: var(--spacingHorizontalS); max-width: 46rem; }
-.mode-option {
-  display: flex; flex-direction: column; gap: var(--spacingVerticalXXS);
-  padding: var(--spacingVerticalM) var(--spacingHorizontalM);
-  font: inherit; text-align: left; cursor: pointer;
-  background: var(--colorNeutralBackground1);
-  border: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
-  border-radius: var(--borderRadiusXLarge);
-  color: inherit;
-  transition: border-color var(--durationFaster) var(--curveEasyEase),
-              background var(--durationFaster) var(--curveEasyEase);
+/* The values, restated wherever the form is not. Aligned as one line so it
+   reads as a caption on the scripts below, not as a second settings panel. */
+.param-summary {
+  display: flex; align-items: baseline; gap: var(--spacingHorizontalS); flex-wrap: wrap;
+  font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground2);
 }
-.mode-option:hover { background: var(--colorSubtleBackgroundHover); }
-.mode-option.selected { border-color: var(--colorBrandStroke1); background: var(--colorBrandBackground2); }
-.mode-label { font-weight: var(--fontWeightSemibold); }
-.mode-hint { font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground3); }
+.param-summary b { font-weight: var(--fontWeightSemibold); color: var(--colorNeutralForeground1); }
+
+.link-button {
+  padding: 0; font: inherit; font-size: var(--fontSizeBase200);
+  background: none; border: none; cursor: pointer;
+  color: var(--colorBrandForegroundLink); text-decoration: underline;
+}
+.link-button:hover { color: var(--colorBrandForegroundLinkHover); }
+.link-button:focus-visible {
+  outline: var(--strokeWidthThick) solid var(--colorBrandStroke1); outline-offset: 2px;
+  border-radius: var(--borderRadiusSmall);
+}
+
+/* ----- action bar ------------------------------------------------------ */
+/* One row: choice on the left, commit on the right, baseline-aligned. Equal
+   padding on all four sides so the bar reads as a single band rather than a
+   stack. Translucent, with the document scrolling underneath rather than
+   stopping at an opaque strip — the reader can see there is more above. */
+.action-bar {
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--spacingHorizontalL); flex-wrap: wrap;
+  padding: var(--spacingVerticalM) var(--spacingHorizontalXXL);
+  max-width: 60rem;
+  background: color-mix(in srgb, var(--colorNeutralBackground2) 82%, transparent);
+  backdrop-filter: blur(20px) saturate(180%);
+  /* A fade where content meets the bar, not a hard 1px rule. */
+  box-shadow: 0 -12px 16px -12px rgb(0 0 0 / 0.18);
+}
+@media (prefers-reduced-transparency: reduce) {
+  .action-bar { background: var(--colorNeutralBackground2); backdrop-filter: none; }
+}
+
+/* ----- segmented control ----------------------------------------------- */
+/* One track, three labels. A track reads as "pick exactly one of these",
+   which three separate cards did not. */
+.segmented {
+  display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+  gap: 2px; padding: 3px;
+  background: var(--colorNeutralBackground6);
+  border-radius: var(--borderRadiusLarge);
+}
+.segment {
+  padding: var(--spacingVerticalS) var(--spacingHorizontalL);
+  font: inherit; font-size: var(--fontSizeBase300); font-weight: var(--fontWeightSemibold);
+  white-space: nowrap;
+  color: var(--colorNeutralForeground2);
+  background: transparent; border: none; border-radius: var(--borderRadiusMedium);
+  cursor: pointer;
+  /* Named properties only, and ease-out so the press reads as immediate. */
+  transition: background var(--durationFaster) var(--curveEasyEase),
+              color var(--durationFaster) var(--curveEasyEase),
+              transform var(--durationFaster) var(--curveEasyEase);
+}
+@media (hover: hover) and (pointer: fine) {
+  .segment:hover { color: var(--colorNeutralForeground1); }
+}
+/* Feedback on press, not on release. */
+.segment:active { transform: scale(0.97); }
+.segment.selected {
+  color: var(--colorNeutralForeground1);
+  background: var(--colorNeutralBackground1);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+}
+.segment:focus-visible {
+  outline: var(--strokeWidthThick) solid var(--colorBrandStroke1); outline-offset: 1px;
+}
+@media (max-width: 40rem) {
+  .segmented { grid-auto-flow: row; width: 100%; }
+  .action-bar { flex-direction: column; align-items: stretch; }
+}
+
+/* "Nothing has been changed in here yet." A dot rather than a count: the
+   number of untouched fields is not actionable, the fact that none were is. */
+.tab-dot {
+  display: inline-block; inline-size: 6px; block-size: 6px;
+  margin-inline-start: var(--spacingHorizontalXS); vertical-align: middle;
+  background: var(--colorBrandForeground1); border-radius: var(--borderRadiusCircular);
+}
 
 /* ----- auto ------------------------------------------------------------ */
 .auto { display: flex; flex-direction: column; gap: var(--spacingVerticalS); margin-bottom: var(--spacingVerticalL); }
@@ -172,15 +231,13 @@ h2 {
 }
 .progress-label { font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground3); white-space: nowrap; }
 
-.handoff-note {
-  font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground3);
-  margin-bottom: var(--spacingVerticalS); max-width: 46rem;
-}
-.send-button {
+/* The commit button. Never moves between panes: same size, same corner, only
+   the label and colour change, so the target is muscle memory. */
+.bar-button {
   display: inline-flex; align-items: center; gap: var(--spacingHorizontalS);
-  margin-bottom: var(--spacingVerticalL);
+  flex-shrink: 0; white-space: nowrap;
 }
-.send-button svg { inline-size: 16px; block-size: 16px; }
+.bar-button svg { inline-size: 16px; block-size: 16px; }
 
 button.primary {
   padding: var(--spacingVerticalS) var(--spacingHorizontalXL);
@@ -188,15 +245,30 @@ button.primary {
   color: #ffffff; background: var(--colorBrandBackground);
   border: none; border-radius: var(--borderRadiusMedium);
   cursor: pointer;
-  transition: background var(--durationFaster) var(--curveEasyEase);
+  transition: background var(--durationFaster) var(--curveEasyEase),
+              transform var(--durationFaster) var(--curveEasyEase);
 }
-button.primary:hover { background: var(--colorBrandForegroundLinkHover); }
+@media (hover: hover) and (pointer: fine) {
+  button.primary:hover { background: var(--colorBrandForegroundLinkHover); }
+}
+/* Instant confirmation that the press landed. */
+button.primary:active { transform: scale(0.97); }
+button.primary:focus-visible {
+  outline: var(--strokeWidthThick) solid var(--colorBrandStroke1); outline-offset: 2px;
+}
 
 /* The auto-mode button hands over something that will change the tenant with
    nobody reading between the commands. It is the same button in the same
    place, in the colour that says so. */
 button.primary.danger { background: var(--colorStatusDangerBackground3); }
-button.primary.danger:hover { background: var(--colorStatusDangerForeground1); }
+@media (hover: hover) and (pointer: fine) {
+  button.primary.danger:hover { background: var(--colorStatusDangerForeground1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .segment:active, button.primary:active { transform: none; }
+  .progress-track > i { transition: none; }
+}
 
 /* ----- steps ----------------------------------------------------------- */
 .steps { list-style: none; display: flex; flex-direction: column; gap: var(--spacingVerticalS); }

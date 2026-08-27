@@ -29,6 +29,10 @@ function initialState(playbookId) {
 		// human between them, so it is something you turn on, never something
 		// you find already on.
 		mode: "guided",
+		// Open on the work, not on the form. Every parameter has a working
+		// default, so landing on "Configure" would make the operator dismiss a
+		// settings pane before seeing what the playbook does.
+		panel: "guided",
 		// The first step opens by default: a fully collapsed list gives the
 		// reader nothing to start from and hides that there is a script at all.
 		progress: { claimedDone: [], openStepId: playbook.buildSteps(params)[0]?.id ?? null },
@@ -94,14 +98,45 @@ export class PlaybookStore {
 	 */
 	setMode(mode) {
 		if (mode !== "guided" && mode !== "auto") return;
-		if (this.state.mode === mode) return;
+		if (this.state.mode === mode) {
+			// Same mode, but possibly a different pane: this is the operator on
+			// the Configure tab clicking back to the mode they already had.
+			// Without this the tab would be inert and they would be stuck on
+			// the form.
+			if (this.state.panel !== mode) this.set({ panel: mode });
+			return;
+		}
 		this.set({
 			mode,
-			note:
-				mode === "auto"
-					? "Auto mode: Copilot runs the whole script in a terminal. You still sign in yourself when the browser prompt opens."
-					: "Guided mode: you run each command yourself, one step at a time.",
+			// Selecting a mode also shows it. A tool that switched to auto and
+			// left the operator staring at the settings form would have changed
+			// what the handoff does with nothing on screen to say so.
+			panel: mode,
+			// No note. The selected segment and the hint above the button both
+			// already say which mode is active and what it will do, and the
+			// note said it a third time — in a banner at the top of the
+			// document, shifting the layout at the far end of the screen from
+			// where the operator just clicked.
+			note: "",
 		});
+	}
+
+	/**
+	 * Show a pane.
+	 *
+	 * Selecting "guided" or "auto" also selects that mode, because on this
+	 * screen they are the same gesture — the operator clicking "Just run it"
+	 * means it. "Configure" is the one tab that changes nothing: it shows the
+	 * parameters without disturbing which mode the handoff will use, so the
+	 * operator can go and look at the policy name and come back.
+	 *
+	 * @param {import("../domain/types.js").PlaybookPanel} panel
+	 */
+	setPanel(panel) {
+		if (panel === "guided" || panel === "auto") return this.setMode(panel);
+		if (panel !== "configure") return;
+		if (this.state.panel === panel) return;
+		this.set({ panel });
 	}
 
 	/** @param {string} stepId */

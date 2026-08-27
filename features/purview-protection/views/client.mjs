@@ -37,7 +37,16 @@ function render(vm) {
 	const activeParam = active instanceof HTMLElement ? active.dataset.param : undefined;
 	const caret = active instanceof HTMLInputElement ? active.selectionStart : null;
 
+	// And preserve scroll. Every keystroke in a parameter field round-trips
+	// through the server and re-renders the whole document; without this the
+	// reader is thrown back to the top mid-edit. Ticking a step off has the
+	// same problem.
+	const scrollTop = ui.main.querySelector(".doc")?.scrollTop ?? 0;
+
 	ui.main.innerHTML = renderPlaybook(vm);
+
+	const doc = ui.main.querySelector(".doc");
+	if (doc && scrollTop) doc.scrollTop = scrollTop;
 
 	if (activeParam) {
 		const next = document.querySelector(`[data-param="${activeParam}"]`);
@@ -98,8 +107,8 @@ document.addEventListener("click", (e) => {
 	const step = closest(e.target, "[data-step]");
 	if (step) return void post("/api/playbook/step", { stepId: step.dataset.step });
 
-	const mode = closest(e.target, "[data-mode]");
-	if (mode) return void post("/api/playbook/mode", { mode: mode.dataset.mode });
+	const panel = closest(e.target, "[data-panel]");
+	if (panel) return void post("/api/playbook/panel", { panel: panel.dataset.panel });
 
 	const action = closest(e.target, "[data-action]");
 	if (action?.dataset.action === "handoff") return void post("/api/playbook/handoff");
