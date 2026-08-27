@@ -116,9 +116,22 @@ Beyond ~8 severe factors the score genuinely plateaus. That is honest: both agen
 everything", and ranking them further would be false precision. Ties break deterministically
 (`compareBySeverity`) so list order is stable across identical calls.
 
-Detection weights live in [`src/risk-catalog.ts`](src/risk-catalog.ts) — all 8 Entra detection types
-with meaning, impact, and remediation. **Tune these to your environment**; the defaults are reasoned,
-not empirical.
+Three further guards came directly from live tenant data, and none were visible against stubs:
+
+- **Duplicate collapse.** Entra emits the same `riskEventType` many times per agent (15+ identical
+  `unifiedAgentRisk` rows observed). Scoring each one drove a *medium* agent to CRITICAL 99. Repeats
+  now collapse into one factor with a bounded recurrence bonus (saturates at +15%).
+- **Adjudicated agents score 0.** `confirmedSafe` and `dismissed` mean a human already ruled. They
+  were surfacing as LOW; re-flagging them trains analysts to ignore the queue.
+- **Entra ceiling.** Entra's `riskLevel` is an ML rollup of its own detections, so re-deriving a
+  score from those same detections and landing *higher* is double counting. Identity-only evidence
+  is capped at Entra's band. Purview and GitHub signals may exceed it — that is evidence Entra
+  cannot see, and is the entire point of this server.
+
+Detection weights live in [`src/risk-catalog.ts`](src/risk-catalog.ts). Note that live tenants emit
+`unifiedAgentRisk` and `aiCompoundAccountRisk` — aggregate types absent from the published docs —
+alongside the 8 documented per-behaviour types. **Tune these to your environment**; the defaults are
+reasoned, not empirical.
 
 ```bash
 npm install && npm run build
@@ -139,8 +152,9 @@ Register in `.mcp.json` (already scaffolded), or point any MCP client at `node d
 - **Graph beta.** `riskyAgents` and `agentRiskDetections` are `/beta` — subject to change and not
   supported in production by Microsoft. Pin and monitor.
 - **Licensing.** ID Protection for agents will require Microsoft Agent 365.
-- **Not verified against a live tenant.** All 37 unit tests and the e2e suite pass against stubs.
-  The Graph request shapes match the documented schema, but no real tenant response has been observed.
+- **Verified against a live tenant** (2026-08): `GET /beta/identityProtection/riskyAgents` returned
+  HTTP 200 with 14 real agents, scored end-to-end through this engine. Three scoring bugs were found
+  only because real data was used — see Scoring below.
 - **Purview and GitHub exposure are caller-supplied.** `assess_agent_blast_radius` accepts them as
   arguments; automatic collection is not wired yet. In the canvas, blast-radius context is attached
   to sample agents only — never to live tenant data, which would fabricate evidence.

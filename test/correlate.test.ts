@@ -245,4 +245,89 @@ describe("assessAgent", () => {
 		});
 		expect(new Set(a.recommendedActions).size).toBe(a.recommendedActions.length);
 	});
+
+	// --- regressions found against live tenant data (2026-08) ---------------
+
+	it("does not inflate the score when one detection type repeats many times", () => {
+		// Real tenants emit the same riskEventType 15+ times for one agent.
+		// Scoring each independently drove a MEDIUM agent to CRITICAL 99.
+		const once = assessAgent({
+			agent: agent({ riskLevel: "medium" }),
+			detections: [detection({ riskEventType: "unifiedAgentRisk", riskLevel: "medium" })],
+		});
+		const fifteen = assessAgent({
+			agent: agent({ riskLevel: "medium" }),
+			detections: Array.from({ length: 15 }, () =>
+				detection({ riskEventType: "unifiedAgentRisk", riskLevel: "medium" }),
+			),
+		});
+		// Recurrence counts for something, but must not multiply.
+		expect(fifteen.compositeScore).toBeGreaterThan(once.compositeScore);
+		expect(fifteen.compositeScore).toBeLessThan(once.compositeScore * 2);
+		expect(fifteen.severity).not.toBe("critical");
+		// Collapsed into a single factor, labelled with the count.
+		expect(fifteen.factors).toHaveLength(1);
+		expect(fifteen.factors[0]!.summary).toMatch(/x15/);
+		expect(fifteen.factors[0]!.evidence?.occurrences).toBe(15);
+	});
+
+	it("scores an adjudicated agent as info, not low", () => {
+		for (const riskState of ["confirmedSafe", "dismissed"] as const) {
+			const a = assessAgent({
+				agent: agent({ riskState, riskLevel: "none" }),
+				detections: [detection({ riskEventType: "unifiedAgentRisk" })],
+			});
+			expect(a.severity).toBe("info");
+			expect(a.compositeScore).toBe(0);
+		}
+	});
+
+	it("tells the analyst a human already ruled on the agent", () => {
+		expect(
+			assessAgent({ agent: agent({ riskState: "confirmedSafe" }), detections: [] }).recommendedActions.join(" "),
+		).toMatch(/marked this agent safe/i);
+		expect(
+			assessAgent({ agent: agent({ riskState: "dismissed" }), detections: [] }).recommendedActions.join(" "),
+		).toMatch(/dismissed by an administrator/i);
+	});
+
+	it("models the detection types Entra actually emits today", () => {
+		// Observed live; absent from the published docs.
+		for (const riskEventType of ["unifiedAgentRisk", "aiCompoundAccountRisk"]) {
+			const a = assessAgent({ agent: agent(), detections: [detection({ riskEventType })] });
+			expect(a.factors[0]!.summary).not.toMatch(/Unrecognized detection/);
+		}
+	});
+
+	it("does not escalate above Entra's verdict on identity evidence alone", () => {
+		// Live regression: two medium aggregate signals scored CRITICAL 81 on an
+		// agent Entra rated medium. Entra's riskLevel already rolls up those same
+		// detections, so exceeding it is double counting.
+		const a = assessAgent({
+			agent: agent({ riskLevel: "medium" }),
+			detections: [
+				...Array.from({ length: 15 }, () => detection({ riskEventType: "unifiedAgentRisk", riskLevel: "medium" })),
+				detection({ riskEventType: "aiCompoundAccountRisk", riskLevel: "medium" }),
+			],
+		});
+		expect(a.compositeScore).toBeLessThanOrEqual(59);
+		expect(a.severity).toBe("medium");
+	});
+
+	it("allows cross-pillar evidence to escalate past that ceiling", () => {
+		// Purview and GitHub describe blast radius Entra cannot see, so they may
+		// legitimately push an agent above Entra's identity-only verdict.
+		const base = {
+			agent: agent({ riskLevel: "medium" }),
+			detections: [detection({ riskEventType: "unifiedAgentRisk", riskLevel: "medium" })],
+		};
+		const capped = assessAgent(base);
+		const escalated = assessAgent({
+			...base,
+			dataExposure: { highestLabel: "Highly Confidential", dlpMatches: 4 },
+			codeExposure: { productionRepos: ["contoso/payments"], canApprovePullRequests: true },
+		});
+		expect(capped.compositeScore).toBeLessThanOrEqual(59);
+		expect(escalated.compositeScore).toBeGreaterThan(59);
+	});
 });

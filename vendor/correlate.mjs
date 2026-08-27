@@ -20,19 +20,44 @@ export function normalizeDetection(d) {
 /** Convert an Entra verdict + detections into weighted factors. */
 function entraFactors(agent, detections) {
     const factors = [];
+    // Collapse repeated detections of the same type.
+    //
+    // Live tenants emit the same riskEventType many times for one agent (15+
+    // identical `unifiedAgentRisk` rows observed). Scoring each independently
+    // drove a MEDIUM-risk agent to a CRITICAL 99 purely through repetition,
+    // which is score inflation, not evidence. Recurrence is meaningful but
+    // sub-linear, so it adds a bounded bonus instead of compounding.
+    const groups = new Map();
     for (const raw of detections) {
         const d = normalizeDetection(raw);
-        const meta = describeDetection(d.riskEventType);
+        const key = d.riskEventType ?? "unknown";
+        const list = groups.get(key);
+        if (list)
+            list.push(d);
+        else
+            groups.set(key, [d]);
+    }
+    for (const [eventType, group] of groups) {
+        // Represent the group by its most severe instance.
+        const d = group.reduce((worst, cur) => (RISK_LEVEL_WEIGHT[cur.riskLevel ?? "medium"] ?? 0) > (RISK_LEVEL_WEIGHT[worst.riskLevel ?? "medium"] ?? 0)
+            ? cur
+            : worst);
+        const meta = describeDetection(eventType);
         // A detection's own level scales its catalog weight: the same event type
         // at `low` should not count as much as at `high`.
         const levelScale = RISK_LEVEL_WEIGHT[d.riskLevel ?? "medium"] ?? 0.5;
+        // Recurrence bonus: saturates at +15%, reached around 10 occurrences.
+        const recurrence = 1 + Math.min(Math.log10(group.length) * 0.15, 0.15);
         factors.push({
             pillar: "entra",
-            code: `entra.${d.riskEventType ?? "unknown"}`,
-            summary: `${meta.title}: ${meta.meaning}`,
-            weight: meta.weight * Math.max(levelScale, 0.25),
+            code: `entra.${eventType}`,
+            summary: group.length > 1
+                ? `${meta.title} (x${group.length}): ${meta.meaning}`
+                : `${meta.title}: ${meta.meaning}`,
+            weight: meta.weight * Math.max(levelScale, 0.25) * recurrence,
             evidence: pruneUndefined({
                 detectionId: d.id,
+                occurrences: group.length > 1 ? group.length : undefined,
                 detectedDateTime: d.detectedDateTime,
                 activityDateTime: d.activityDateTime,
                 riskEvidence: d.riskEvidence,
@@ -160,6 +185,10 @@ export function severityFor(score, riskState) {
     // An explicit human confirmation outranks any computed score.
     if (riskState === "confirmedCompromised")
         return "critical";
+    // A human already adjudicated these. Re-flagging them would train analysts
+    // to ignore the queue, which is how real incidents get missed.
+    if (riskState === "confirmedSafe" || riskState === "dismissed")
+        return "info";
     if (score >= 80)
         return "critical";
     if (score >= 60)
@@ -170,9 +199,19 @@ export function severityFor(score, riskState) {
         return "low";
     return "info";
 }
+/** True when a human has already adjudicated this agent's risk. */
+function isResolved(riskState) {
+    return riskState === "confirmedSafe" || riskState === "dismissed";
+}
 /** Derive concrete, de-duplicated next steps from the contributing factors. */
 export function recommendedActions(agent, factors, severity) {
     const actions = new Set();
+    if (agent.riskState === "confirmedSafe") {
+        return ["An administrator marked this agent safe. No action required."];
+    }
+    if (agent.riskState === "dismissed") {
+        return ["Risk was dismissed by an administrator. Entra will keep flagging similar activity."];
+    }
     if (agent.riskState === "confirmedCompromised") {
         actions.add("Agent is confirmed compromised — disable it and rotate all blueprint credentials now.");
     }
@@ -201,6 +240,24 @@ export function recommendedActions(agent, factors, severity) {
     }
     return [...actions];
 }
+/**
+ * Ceiling on how far the composite may exceed Entra's own verdict when the
+ * only evidence is identity-side.
+ *
+ * Entra's riskLevel is an ML rollup that already accounts for its detections.
+ * Re-deriving a score from those same detections and landing higher is double
+ * counting: two `medium` aggregate signals combined to CRITICAL 81 on an agent
+ * Entra rated `medium`. Escalation must be earned by evidence Entra cannot
+ * see — Purview exposure or GitHub reach — not by recomputing its own inputs.
+ */
+const ENTRA_CEILING = {
+    high: 100,
+    medium: 59, // caps at "medium" band; cannot reach high (60) on identity alone
+    low: 34, // caps at "low" band
+    hidden: 34,
+    none: 20,
+    unknownFutureValue: 59,
+};
 /** Build the full cross-pillar assessment for one agent. */
 export function assessAgent(input) {
     const { agent, detections = [], dataExposure, codeExposure, degraded } = input;
@@ -209,7 +266,19 @@ export function assessAgent(input) {
         ...purviewFactors(dataExposure),
         ...githubFactors(codeExposure),
     ].sort((a, b) => b.weight - a.weight);
-    const compositeScore = computeComposite(factors);
+    let compositeScore;
+    if (isResolved(agent.riskState)) {
+        compositeScore = 0;
+    }
+    else {
+        compositeScore = computeComposite(factors);
+        // Only cap when every factor is identity-side. Cross-pillar evidence is
+        // exactly the thing Entra cannot see, so it may legitimately escalate.
+        const hasBlastRadius = factors.some((f) => f.pillar !== "entra");
+        if (!hasBlastRadius) {
+            compositeScore = Math.min(compositeScore, ENTRA_CEILING[agent.riskLevel] ?? 59);
+        }
+    }
     const severity = severityFor(compositeScore, agent.riskState);
     return pruneUndefined({
         agentId: agent.id,

@@ -5,6 +5,25 @@
 // Vendored because a Copilot plugin install never runs npm install.
 
 export const DETECTION_CATALOG = {
+    // ---------------------------------------------------------------
+    // Observed in live tenant data (2026-08) but NOT in the public docs.
+    // These are the types Entra actually emits today; the documented
+    // per-behaviour types below appear to be the forward-looking taxonomy.
+    // ---------------------------------------------------------------
+    unifiedAgentRisk: {
+        title: "Unified agent risk",
+        meaning: "Entra's aggregate agent risk signal. Rolls up several behavioural detections into one verdict rather than naming a single cause.",
+        impact: "Indicates the agent deviated from its normal pattern. Because it is an aggregate, consult riskEvidence for the specific behaviour.",
+        weight: 0.6,
+        action: "Read the detection's riskEvidence, then compare the activity against the agent's intended purpose.",
+    },
+    aiCompoundAccountRisk: {
+        title: "Compound AI account risk",
+        meaning: "Risk arising from the combination of an agent identity and the user account that owns or operates it.",
+        impact: "Compromise of either side can drive the other. Blast radius spans both the agent's permissions and the owner's.",
+        weight: 0.7,
+        action: "Investigate the owning user's sign-in risk alongside the agent's; remediate both or neither.",
+    },
     adminConfirmedAgentCompromised: {
         title: "Admin confirmed compromised",
         meaning: "A human administrator explicitly marked this agent as compromised.",
