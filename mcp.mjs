@@ -1,17 +1,22 @@
 #!/usr/bin/env node
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { GraphClient } from "./graph-client.js";
-import { registerTools } from "./tools.js";
-
 /**
- * Security Canvas MCP server.
+ * MCP host — stdio server for Copilot app, VS Code, Security Copilot,
+ * Copilot Studio, and Foundry.
+ *
+ * Composition root only. It shares the repository, the scoring engine, and the
+ * use cases with the canvas, so the two surfaces cannot disagree about which
+ * agents are risky or how severe they are.
  *
  * Transport is stdio, so stdout belongs to JSON-RPC. All diagnostics go to
  * stderr — a stray console.log here corrupts the protocol and the client
  * disconnects with an opaque parse error.
  */
-async function main(): Promise<void> {
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { AgentRepository } from "./features/risky-agents/data/agent-repository.mjs";
+import { registerTools } from "./features/risky-agents/tools/mcp-tools.mjs";
+
+async function main() {
 	const server = new McpServer(
 		{ name: "security-canvas", version: "0.1.0" },
 		{
@@ -24,10 +29,9 @@ async function main(): Promise<void> {
 		},
 	);
 
-	registerTools(server, new GraphClient());
+	registerTools(server, new AgentRepository());
 
-	const transport = new StdioServerTransport();
-	await server.connect(transport);
+	await server.connect(new StdioServerTransport());
 	process.stderr.write("[security-canvas] MCP server ready on stdio\n");
 }
 

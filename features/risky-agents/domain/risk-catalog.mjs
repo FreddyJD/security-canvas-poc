@@ -1,5 +1,3 @@
-import type { Pillar, RiskLevel } from "./types.js";
-
 /**
  * Knowledge base for Entra ID Protection agent detections.
  *
@@ -10,21 +8,23 @@ import type { Pillar, RiskLevel } from "./types.js";
  *
  * Detection list verified against Microsoft Learn (2026-08):
  * https://learn.microsoft.com/entra/id-protection/concept-risky-agents
+ *
+ * Pure data and pure functions. No imports, no I/O — which is what lets the
+ * canvas and the MCP server share this file verbatim.
+ *
+ * @typedef {import("./types.js").Pillar} Pillar
+ * @typedef {import("./types.js").RiskLevel} RiskLevel
+ *
+ * @typedef {object} DetectionMeta
+ * @property {string} title    Human title.
+ * @property {string} meaning  What the signal actually means.
+ * @property {string} impact   Why a responder should care.
+ * @property {number} weight   Base contribution to the composite score, 0..1.
+ * @property {string} action   Concrete remediation step.
  */
-export interface DetectionMeta {
-	/** Human title. */
-	title: string;
-	/** What the signal actually means. */
-	meaning: string;
-	/** Why a responder should care. */
-	impact: string;
-	/** Base contribution to the composite score, 0..1. */
-	weight: number;
-	/** Concrete remediation step. */
-	action: string;
-}
 
-export const DETECTION_CATALOG: Record<string, DetectionMeta> = {
+/** @type {Record<string, DetectionMeta>} */
+export const DETECTION_CATALOG = {
 	// ---------------------------------------------------------------
 	// Observed in live tenant data (2026-08) but NOT in the public docs.
 	// These are the types Entra actually emits today; the documented
@@ -109,8 +109,11 @@ export const DETECTION_CATALOG: Record<string, DetectionMeta> = {
 	},
 };
 
-/** Unknown detection types still need a sane, non-zero weight. */
-export const UNKNOWN_DETECTION: DetectionMeta = {
+/**
+ * Unknown detection types still need a sane, non-zero weight.
+ * @type {DetectionMeta}
+ */
+export const UNKNOWN_DETECTION = {
 	title: "Unrecognized detection",
 	meaning: "Entra reported a detection type this server does not yet model.",
 	impact: "Unknown. The detection catalog may be out of date with Entra.",
@@ -118,13 +121,20 @@ export const UNKNOWN_DETECTION: DetectionMeta = {
 	action: "Inspect the raw riskEventType and riskEvidence in the Entra portal.",
 };
 
-export function describeDetection(riskEventType: string | undefined): DetectionMeta {
+/**
+ * @param {string | undefined} riskEventType
+ * @returns {DetectionMeta}
+ */
+export function describeDetection(riskEventType) {
 	if (!riskEventType) return UNKNOWN_DETECTION;
 	return DETECTION_CATALOG[riskEventType] ?? UNKNOWN_DETECTION;
 }
 
-/** Numeric weight for an Entra risk level, used as a multiplier. */
-export const RISK_LEVEL_WEIGHT: Record<RiskLevel, number> = {
+/**
+ * Numeric weight for an Entra risk level, used as a multiplier.
+ * @type {Record<RiskLevel, number>}
+ */
+export const RISK_LEVEL_WEIGHT = {
 	high: 1.0,
 	medium: 0.6,
 	low: 0.3,
@@ -142,8 +152,10 @@ export const RISK_LEVEL_WEIGHT: Record<RiskLevel, number> = {
  * ML-derived risk verdict. The others contribute *blast radius* — they
  * describe how much damage the identity could do, not how likely it is
  * to be malicious.
+ *
+ * @type {Record<Pillar, number>}
  */
-export const PILLAR_WEIGHT: Record<Pillar, number> = {
+export const PILLAR_WEIGHT = {
 	entra: 1.0,
 	purview: 0.7,
 	github: 0.6,

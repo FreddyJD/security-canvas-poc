@@ -26,18 +26,48 @@ Triage needs both — and in the demo above, adding data and code context moves 
 
 ## Architecture
 
-Two layers ship from one repo, sharing a single scoring engine so they can never disagree
-about severity.
+Two hosts ship from one repo, over a single feature. They share the scoring engine, the data
+access, and the use cases, so they can never disagree about severity.
 
 ```
-CANVAS   — triage queue UI in the Copilot app side panel
-MCP      — tools; Copilot app, VS Code, Security Copilot, Copilot Studio, Foundry
-ENGINE   — src/correlate.ts + src/risk-catalog.ts  (shared by both)
-DATA     — Graph · Purview · Defender · GitHub
+HOSTS    — extension.mjs (canvas panel) · mcp.mjs (stdio; VS Code, Security Copilot, Foundry)
+TOOLS    — canvas actions + MCP tools — thin adapters, no logic
+VIEWS    — screens, behind a view registry the model routes to
+USECASES — all the logic: auth gaps, failures, selection, refresh  ← the middle layer
+DATA     — AgentRepository: Graph in, scored assessments out
+DOMAIN   — scoring + detection catalog: pure, zero imports
 ```
 
-The MCP server is the portable asset — five hosts, no exposure to the Copilot canvas API whose
-types are still marked `@experimental`. The canvas is the surface where triage actually happens.
+Dependencies point one way, inward. `domain/` imports nothing. `usecases/` depends on the
+`AgentSource` *port*, not on the class that implements it, so it never learns Graph exists. The
+hosts are composition roots — build the dependencies, wire the actions, and get out of the way.
+
+**No build step.** A Copilot plugin install is a plain file copy: `npm install` never runs, so
+`node_modules` cannot exist at runtime. Everything is ESM that Node executes directly. TypeScript
+is still enforced — `checkJs` type-checks the JSDoc annotations, with `tsc --noEmit` in CI. That
+constraint is also what removed the old generated `vendor/` copy of the scoring engine: with zero
+external imports, both hosts just import the same file.
+
+### The middle layer
+
+Between a tool call and a component sits the part that usually rots. The rule that keeps it honest:
+
+> A use case may touch the repository and the store, and must return plain data. It never renders
+> HTML, never builds an MCP envelope, never touches `req`/`res`.
+
+Everything that can go wrong on the way to a screen — no client id, no token, an expired session,
+a 403, a throttle, an empty tenant — is resolved in `usecases/` into a `status` the UI renders
+without branching on HTTP codes. That is why both hosts are thin, and why `agent-triage.test.ts`
+can cover every failure mode without a browser or a network.
+
+### Why a view registry, not generic components
+
+The canvas exposes `show_triage_queue` / `show_agent_detail` and the model picks one. It does
+**not** get primitives to compose tables from — the model already has a general-purpose renderer
+(markdown in chat), so generic primitives would produce a worse markdown table that costs more
+tokens, and hand the analyst a different layout on every query. Naming the screens means the canvas
+owns sorting, empty states, keyboard nav and hover once. Adding a screen is: write a view, register
+it, expose a matching `show_<view>` action.
 
 ## Install
 
@@ -136,24 +166,27 @@ Three further guards came directly from live tenant data, and none were visible 
   is capped at Entra's band. Purview and GitHub signals may exceed it — that is evidence Entra
   cannot see, and is the entire point of this server.
 
-Detection weights live in [`src/risk-catalog.ts`](src/risk-catalog.ts). Note that live tenants emit
+Detection weights live in [`features/risky-agents/domain/risk-catalog.mjs`](features/risky-agents/domain/risk-catalog.mjs). Note that live tenants emit
 `unifiedAgentRisk` and `aiCompoundAccountRisk` — aggregate types absent from the published docs —
 alongside the 8 documented per-behaviour types. **Tune these to your environment**; the defaults are
 reasoned, not empirical.
 
 ```bash
-npm install && npm run build
+npm install       # only the MCP SDK + zod; the canvas itself needs no deps
 
-az login          # or set AZURE_TENANT_ID + AZURE_CLIENT_ID for device code
-npm run test:e2e  # verify with a fake tenant, no credentials needed
+npm test          # 103 unit tests
+npm run typecheck # tsc --noEmit over JSDoc-annotated ESM
+npm run test:e2e  # real MCP protocol against a fake tenant, no credentials needed
 npm run inspect   # browse tools in the MCP Inspector
 ```
+
+There is no build step — `mcp.mjs` and `extension.mjs` run as-is.
 
 **Permissions.** Reads need `IdentityRiskyAgent.Read.All` and one of Security Reader / Security
 Operator / Security Administrator. Writes need `IdentityRiskyAgent.ReadWrite.All` and Security
 Administrator.
 
-Register in `.mcp.json` (already scaffolded), or point any MCP client at `node dist/index.js`.
+Register in `.mcp.json` (already scaffolded), or point any MCP client at `node mcp.mjs`.
 
 ## Status and caveats
 
@@ -177,16 +210,45 @@ Register in `.mcp.json` (already scaffolded), or point any MCP client at `node d
 
 ## Layout
 
+Feature-first: everything about risky agents lives in one directory, in dependency order.
+
 ```
-src/
-  index.ts          stdio entry point (stdout is JSON-RPC — never console.log)
-  tools.ts          MCP tool definitions, rendering, safety gates
-  correlate.ts      scoring engine — the actual product
-  risk-catalog.ts   detection knowledge base — tune this
-  graph-client.ts   delegated auth, paging, OData escaping
-  types.ts          Graph beta schema + correlation types
-test/
-  correlate.test.ts     25 tests — scoring properties
-  graph-client.test.ts  12 tests — requests, paging, errors, injection
-  e2e-smoke.mjs         live MCP protocol over InMemoryTransport
+extension.mjs                    canvas host — composition root (must stay at repo root)
+mcp.mjs                          MCP host — stdio (stdout is JSON-RPC; never console.log)
+
+features/risky-agents/
+  domain/       types.d.ts       shared contracts, incl. the AgentSource port
+                scoring.mjs      the scoring engine — the actual product
+                risk-catalog.mjs detection knowledge base — tune this
+  data/         agent-repository.mjs   the only layer that knows Graph exists
+  usecases/     agent-triage.mjs the middle layer: all the logic
+                store.mjs        observable state, broadcast over SSE
+  components/   primitives.mjs   esc(), badges, cards — every string escaped here
+                agent-list.mjs   queue rows          (stateless)
+                agent-detail.mjs evidence pane       (stateless)
+                connection-gate.mjs  sign-in / error / loading
+  views/        registry.mjs     the routing table the model targets
+                triage-queue.mjs the two-pane screen
+                canvas-server.mjs local HTTP: serves modules, maps routes to use cases
+                client.mjs       browser entry — SSE in, delegated clicks out
+                styles.mjs       canvas CSS
+  tools/        canvas-actions.mjs  show_* actions for the model
+                mcp-tools.mjs       5 MCP tools, both delegating to usecases/
+                render-text.mjs     prose for models (the MCP peer of components/)
+
+platform/       graph.mjs        Graph client — token provider injected
+                auth.mjs         PKCE browser sign-in, token cache, CLI fallback
+                config.mjs       disk-first config (the app has no shell env)
+
+test/           scoring.test.ts          37 — scoring properties + live-data regressions
+                components.test.ts       22 — rendering, escaping, routing
+                agent-triage.test.ts     20 — every failure mode, no network
+                graph.test.ts            14 — requests, paging, errors, injection
+                agent-repository.test.ts 10 — fetch strategy and mapping
+                e2e-smoke.mjs            real MCP protocol, stub injected at the Graph boundary
 ```
+
+Components are loaded twice — by Node in tests and by the browser as ES modules over the canvas's
+own HTTP server. They are pure string functions, so what the tests check is exactly what ships.
+Only `components/` and `views/` are reachable from the browser; `platform/` and `domain/` are not.
+

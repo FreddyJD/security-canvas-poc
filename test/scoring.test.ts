@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { assessAgent, computeComposite, normalizeDetection, severityFor } from "../src/correlate.js";
-import type { AgentRiskDetection, RiskFactor, RiskyAgent } from "../src/types.js";
+import {
+	assessAgent,
+	compareBySeverity,
+	computeComposite,
+	enrichDetections,
+	normalizeDetection,
+	severityFor,
+} from "../features/risky-agents/domain/scoring.mjs";
+import type {
+	AgentRiskAssessment,
+	AgentRiskDetection,
+	RiskFactor,
+	RiskyAgent,
+} from "../features/risky-agents/domain/types.js";
 
 const agent = (over: Partial<RiskyAgent> = {}): RiskyAgent => ({
 	id: "agent-1",
@@ -329,5 +341,70 @@ describe("assessAgent", () => {
 		});
 		expect(capped.compositeScore).toBeLessThanOrEqual(59);
 		expect(escalated.compositeScore).toBeGreaterThan(59);
+	});
+});
+
+describe("compareBySeverity", () => {
+	const mk = (over: Partial<AgentRiskAssessment>): AgentRiskAssessment =>
+		({
+			agentId: "a",
+			displayName: "A",
+			identityType: "agentIdentity",
+			entraRiskLevel: "medium",
+			riskState: "atRisk",
+			compositeScore: 50,
+			severity: "medium",
+			factors: [],
+			recommendedActions: [],
+			...over,
+		} as AgentRiskAssessment);
+
+	it("ranks by composite score first", () => {
+		const sorted = [mk({ agentId: "low", compositeScore: 20 }), mk({ agentId: "high", compositeScore: 90 })].sort(
+			compareBySeverity,
+		);
+		expect(sorted[0]!.agentId).toBe("high");
+	});
+
+	it("breaks score ties with a confirmed compromise", () => {
+		const sorted = [
+			mk({ agentId: "atRisk", riskState: "atRisk" }),
+			mk({ agentId: "confirmed", riskState: "confirmedCompromised" }),
+		].sort(compareBySeverity);
+		expect(sorted[0]!.agentId).toBe("confirmed");
+	});
+
+	it("is a total order, so repeated calls never reshuffle the queue", () => {
+		// Scores legitimately tie at the top. Without a deterministic tiebreak
+		// the analyst sees a different "worst agent" on every refresh.
+		const agents = [
+			mk({ agentId: "c-id", compositeScore: 99 }),
+			mk({ agentId: "a-id", compositeScore: 99 }),
+			mk({ agentId: "b-id", compositeScore: 99 }),
+		];
+		const once = [...agents].sort(compareBySeverity).map((a) => a.agentId);
+		const twice = [...agents].reverse().sort(compareBySeverity).map((a) => a.agentId);
+		expect(once).toEqual(["a-id", "b-id", "c-id"]);
+		expect(twice).toEqual(once);
+	});
+});
+
+describe("enrichDetections", () => {
+	it("attaches catalog meaning, impact, and remediation", () => {
+		const [e] = enrichDetections([detection({ riskEventType: "suspiciousCredentialUsage" })]);
+		expect(e!.title).toBe("Suspicious credential usage");
+		expect(e!.impact).toMatch(/persistence/i);
+		expect(e!.recommendedAction).toMatch(/rotate/i);
+	});
+
+	it("normalizes deprecated fields before enriching", () => {
+		const [e] = enrichDetections([detection({ agentId: "a-9", riskEventType: "signInSpike" })]);
+		expect(e!.title).toBe("Sign-in volume spike");
+	});
+
+	it("degrades gracefully for a detection type it does not model", () => {
+		const [e] = enrichDetections([detection({ riskEventType: "someFutureDetection2027" })]);
+		expect(e!.title).toBe("Unrecognized detection");
+		expect(e!.recommendedAction).toMatch(/Entra portal/);
 	});
 });

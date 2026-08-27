@@ -1,21 +1,33 @@
-import { DETECTION_CATALOG, PILLAR_WEIGHT, RISK_LEVEL_WEIGHT, describeDetection } from "./risk-catalog.js";
-import type {
-	AgentRiskAssessment,
-	AgentRiskDetection,
-	CodeExposure,
-	DataExposure,
-	Pillar,
-	RiskFactor,
-	RiskLevel,
-	RiskyAgent,
-} from "./types.js";
+import { DETECTION_CATALOG, PILLAR_WEIGHT, RISK_LEVEL_WEIGHT, describeDetection } from "./risk-catalog.mjs";
+
+/**
+ * The scoring engine. Pure: same inputs, same verdict, no I/O, no clock.
+ *
+ * This is the single most important file to keep host-agnostic — the canvas
+ * and the MCP server both import it directly, so they cannot disagree about
+ * severity. It was previously duplicated into a generated `vendor/` copy;
+ * being dependency-free is what makes that copy unnecessary.
+ *
+ * @typedef {import("./types.js").AgentRiskAssessment} AgentRiskAssessment
+ * @typedef {import("./types.js").AgentRiskDetection} AgentRiskDetection
+ * @typedef {import("./types.js").CodeExposure} CodeExposure
+ * @typedef {import("./types.js").DataExposure} DataExposure
+ * @typedef {import("./types.js").Pillar} Pillar
+ * @typedef {import("./types.js").RiskFactor} RiskFactor
+ * @typedef {import("./types.js").RiskLevel} RiskLevel
+ * @typedef {import("./types.js").RiskyAgent} RiskyAgent
+ * @typedef {import("./types.js").Severity} Severity
+ */
 
 /**
  * Normalize a detection, collapsing Graph's deprecated fields onto the
  * supported ones. `agentId`/`agentDisplayName` are slated for removal after
  * 2027-04-28; doing this once here means no other module has to care.
+ *
+ * @param {AgentRiskDetection} d
+ * @returns {AgentRiskDetection}
  */
-export function normalizeDetection(d: AgentRiskDetection): AgentRiskDetection {
+export function normalizeDetection(d) {
 	return {
 		...d,
 		identityId: d.identityId ?? d.agentId,
@@ -23,9 +35,16 @@ export function normalizeDetection(d: AgentRiskDetection): AgentRiskDetection {
 	};
 }
 
-/** Convert an Entra verdict + detections into weighted factors. */
-function entraFactors(agent: RiskyAgent, detections: AgentRiskDetection[]): RiskFactor[] {
-	const factors: RiskFactor[] = [];
+/**
+ * Convert an Entra verdict + detections into weighted factors.
+ *
+ * @param {RiskyAgent} agent
+ * @param {AgentRiskDetection[]} detections
+ * @returns {RiskFactor[]}
+ */
+function entraFactors(agent, detections) {
+	/** @type {RiskFactor[]} */
+	const factors = [];
 
 	// Collapse repeated detections of the same type.
 	//
@@ -34,7 +53,8 @@ function entraFactors(agent: RiskyAgent, detections: AgentRiskDetection[]): Risk
 	// drove a MEDIUM-risk agent to a CRITICAL 99 purely through repetition,
 	// which is score inflation, not evidence. Recurrence is meaningful but
 	// sub-linear, so it adds a bounded bonus instead of compounding.
-	const groups = new Map<string, AgentRiskDetection[]>();
+	/** @type {Map<string, AgentRiskDetection[]>} */
+	const groups = new Map();
 	for (const raw of detections) {
 		const d = normalizeDetection(raw);
 		const key = d.riskEventType ?? "unknown";
@@ -89,17 +109,26 @@ function entraFactors(agent: RiskyAgent, detections: AgentRiskDetection[]): Risk
 			code: "entra.standingRiskLevel",
 			summary: `Entra reports ${agent.riskLevel} risk with no detections in the retention window.`,
 			weight: (RISK_LEVEL_WEIGHT[agent.riskLevel] ?? 0.3) * 0.8,
-			evidence: pruneUndefined({ riskDetail: agent.riskDetail, riskLastModifiedDateTime: agent.riskLastModifiedDateTime }),
+			evidence: pruneUndefined({
+				riskDetail: agent.riskDetail,
+				riskLastModifiedDateTime: agent.riskLastModifiedDateTime,
+			}),
 		});
 	}
 
 	return factors;
 }
 
-/** Purview exposure → blast-radius factors. */
-function purviewFactors(exposure?: DataExposure): RiskFactor[] {
+/**
+ * Purview exposure → blast-radius factors.
+ *
+ * @param {DataExposure} [exposure]
+ * @returns {RiskFactor[]}
+ */
+function purviewFactors(exposure) {
 	if (!exposure) return [];
-	const factors: RiskFactor[] = [];
+	/** @type {RiskFactor[]} */
+	const factors = [];
 
 	if (exposure.highestLabel) {
 		const label = exposure.highestLabel.toLowerCase();
@@ -127,10 +156,16 @@ function purviewFactors(exposure?: DataExposure): RiskFactor[] {
 	return factors;
 }
 
-/** GitHub exposure → blast-radius factors. */
-function githubFactors(exposure?: CodeExposure): RiskFactor[] {
+/**
+ * GitHub exposure → blast-radius factors.
+ *
+ * @param {CodeExposure} [exposure]
+ * @returns {RiskFactor[]}
+ */
+function githubFactors(exposure) {
 	if (!exposure) return [];
-	const factors: RiskFactor[] = [];
+	/** @type {RiskFactor[]} */
+	const factors = [];
 
 	const prodCount = exposure.productionRepos?.length ?? 0;
 	if (prodCount > 0) {
@@ -192,7 +227,11 @@ function githubFactors(exposure?: CodeExposure): RiskFactor[] {
 const MAX_FACTOR_WEIGHT = 0.92;
 const MAX_SCORE = 99;
 
-export function computeComposite(factors: RiskFactor[]): number {
+/**
+ * @param {RiskFactor[]} factors
+ * @returns {number}
+ */
+export function computeComposite(factors) {
 	if (factors.length === 0) return 0;
 	let inverse = 1;
 	for (const f of factors) {
@@ -202,7 +241,12 @@ export function computeComposite(factors: RiskFactor[]): number {
 	return Math.round((1 - inverse) * MAX_SCORE);
 }
 
-export function severityFor(score: number, riskState?: string): AgentRiskAssessment["severity"] {
+/**
+ * @param {number} score
+ * @param {string} [riskState]
+ * @returns {Severity}
+ */
+export function severityFor(score, riskState) {
 	// An explicit human confirmation outranks any computed score.
 	if (riskState === "confirmedCompromised") return "critical";
 	// A human already adjudicated these. Re-flagging them would train analysts
@@ -215,18 +259,25 @@ export function severityFor(score: number, riskState?: string): AgentRiskAssessm
 	return "info";
 }
 
-/** True when a human has already adjudicated this agent's risk. */
-function isResolved(riskState?: string): boolean {
+/**
+ * True when a human has already adjudicated this agent's risk.
+ * @param {string} [riskState]
+ */
+function isResolved(riskState) {
 	return riskState === "confirmedSafe" || riskState === "dismissed";
 }
 
-/** Derive concrete, de-duplicated next steps from the contributing factors. */
-export function recommendedActions(
-	agent: RiskyAgent,
-	factors: RiskFactor[],
-	severity: AgentRiskAssessment["severity"],
-): string[] {
-	const actions = new Set<string>();
+/**
+ * Derive concrete, de-duplicated next steps from the contributing factors.
+ *
+ * @param {RiskyAgent} agent
+ * @param {RiskFactor[]} factors
+ * @param {Severity} severity
+ * @returns {string[]}
+ */
+export function recommendedActions(agent, factors, severity) {
+	/** @type {Set<string>} */
+	const actions = new Set();
 
 	if (agent.riskState === "confirmedSafe") {
 		return ["An administrator marked this agent safe. No action required."];
@@ -274,8 +325,10 @@ export function recommendedActions(
  * counting: two `medium` aggregate signals combined to CRITICAL 81 on an agent
  * Entra rated `medium`. Escalation must be earned by evidence Entra cannot
  * see — Purview exposure or GitHub reach — not by recomputing its own inputs.
+ *
+ * @type {Record<RiskLevel, number>}
  */
-const ENTRA_CEILING: Record<RiskLevel, number> = {
+const ENTRA_CEILING = {
 	high: 100,
 	medium: 59, // caps at "medium" band; cannot reach high (60) on identity alone
 	low: 34, // caps at "low" band
@@ -284,14 +337,18 @@ const ENTRA_CEILING: Record<RiskLevel, number> = {
 	unknownFutureValue: 59,
 };
 
-/** Build the full cross-pillar assessment for one agent. */
-export function assessAgent(input: {
-	agent: RiskyAgent;
-	detections?: AgentRiskDetection[];
-	dataExposure?: DataExposure;
-	codeExposure?: CodeExposure;
-	degraded?: Partial<Record<Pillar, string>>;
-}): AgentRiskAssessment {
+/**
+ * Build the full cross-pillar assessment for one agent.
+ *
+ * @param {object} input
+ * @param {RiskyAgent} input.agent
+ * @param {AgentRiskDetection[]} [input.detections]
+ * @param {DataExposure} [input.dataExposure]
+ * @param {CodeExposure} [input.codeExposure]
+ * @param {Partial<Record<Pillar, string>>} [input.degraded]
+ * @returns {AgentRiskAssessment}
+ */
+export function assessAgent(input) {
 	const { agent, detections = [], dataExposure, codeExposure, degraded } = input;
 
 	const factors = [
@@ -300,7 +357,7 @@ export function assessAgent(input: {
 		...githubFactors(codeExposure),
 	].sort((a, b) => b.weight - a.weight);
 
-	let compositeScore: number;
+	let compositeScore;
 	if (isResolved(agent.riskState)) {
 		compositeScore = 0;
 	} else {
@@ -315,34 +372,93 @@ export function assessAgent(input: {
 
 	const severity = severityFor(compositeScore, agent.riskState);
 
-	return pruneUndefined({
-		agentId: agent.id,
-		displayName: agent.agentDisplayName ?? "(unnamed agent)",
-		identityType: agent.identityType,
-		blueprintId: agent.blueprintId,
-		entraRiskLevel: agent.riskLevel,
-		riskState: agent.riskState,
-		compositeScore,
-		severity,
-		factors,
-		dataExposure,
-		codeExposure,
-		recommendedActions: recommendedActions(agent, factors, severity),
-		isProcessing: agent.isProcessing,
-		degraded,
-	}) as AgentRiskAssessment;
+	return /** @type {AgentRiskAssessment} */ (
+		pruneUndefined({
+			agentId: agent.id,
+			displayName: agent.agentDisplayName ?? "(unnamed agent)",
+			identityType: agent.identityType,
+			blueprintId: agent.blueprintId,
+			entraRiskLevel: agent.riskLevel,
+			riskState: agent.riskState,
+			compositeScore,
+			severity,
+			factors,
+			dataExposure,
+			codeExposure,
+			recommendedActions: recommendedActions(agent, factors, severity),
+			isProcessing: agent.isProcessing,
+			degraded,
+		})
+	);
 }
 
-function clamp01(n: number): number {
+/**
+ * Triage ordering, shared by every surface.
+ *
+ * Composite scores legitimately tie at the top (see computeComposite), so ties
+ * are broken deterministically: confirmed compromises first, then more
+ * corroborating evidence, then agent id. Without this, equally-scored agents
+ * would shuffle between identical calls and the analyst could not trust the
+ * list order.
+ *
+ * Living here rather than in a tool file is deliberate — the canvas queue and
+ * the MCP table must present the same order, or the two surfaces contradict
+ * each other about which agent to look at first.
+ *
+ * @param {AgentRiskAssessment} a
+ * @param {AgentRiskAssessment} b
+ * @returns {number}
+ */
+export function compareBySeverity(a, b) {
+	if (b.compositeScore !== a.compositeScore) return b.compositeScore - a.compositeScore;
+
+	const confirmed = (/** @type {AgentRiskAssessment} */ x) => (x.riskState === "confirmedCompromised" ? 1 : 0);
+	if (confirmed(b) !== confirmed(a)) return confirmed(b) - confirmed(a);
+
+	if (b.factors.length !== a.factors.length) return b.factors.length - a.factors.length;
+	return String(a.agentId).localeCompare(String(b.agentId));
+}
+
+/**
+ * Attach catalog knowledge to raw detections.
+ *
+ * @param {AgentRiskDetection[]} detections
+ * @returns {import("./types.js").EnrichedDetection[]}
+ */
+export function enrichDetections(detections) {
+	return detections.map((raw) => {
+		const d = normalizeDetection(raw);
+		const meta = describeDetection(d.riskEventType);
+		return {
+			id: d.id,
+			riskEventType: d.riskEventType,
+			title: meta.title,
+			meaning: meta.meaning,
+			impact: meta.impact,
+			recommendedAction: meta.action,
+			riskLevel: d.riskLevel,
+			detectedDateTime: d.detectedDateTime,
+			riskEvidence: d.riskEvidence,
+		};
+	});
+}
+
+/** @param {number} n */
+function clamp01(n) {
 	if (Number.isNaN(n)) return 0;
 	return Math.max(0, Math.min(1, n));
 }
 
-/** Drop undefined keys so payloads sent to the model stay compact. */
-function pruneUndefined<T extends Record<string, unknown>>(obj: T): T {
-	const out = {} as T;
+/**
+ * Drop undefined keys so payloads sent to the model stay compact.
+ * @template {Record<string, unknown>} T
+ * @param {T} obj
+ * @returns {T}
+ */
+function pruneUndefined(obj) {
+	const out = /** @type {T} */ ({});
 	for (const [k, v] of Object.entries(obj)) {
-		if (v !== undefined) (out as Record<string, unknown>)[k] = v;
+		if (v !== undefined) /** @type {Record<string, unknown>} */ (out)[k] = v;
 	}
 	return out;
 }
