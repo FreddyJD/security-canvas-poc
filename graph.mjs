@@ -198,21 +198,37 @@ async function graphGet(token, path) {
 
 /**
  * Load risky agents plus their detections.
- * Returns { agents, detections, live, note, needsAuth } so the UI can label
- * its source and offer sign-in when required.
+ *
+ * Returns a discriminated result rather than ever fabricating agents:
+ *   { status: "needs-config" }        no client id set
+ *   { status: "needs-auth" }          client id set, no usable token
+ *   { status: "error", note, hint }   Graph refused
+ *   { status: "connected", agents }   real tenant data
+ *
+ * There is deliberately no sample or demo mode. A security console that can
+ * show invented agents is worse than one that shows nothing: an analyst who
+ * mistakes placeholder rows for their tenant draws exactly the wrong
+ * conclusion, and the failure is silent.
  */
 export async function loadTenantData({ limit = 25 } = {}) {
 	const { clientId } = getConfig();
-	const token = await getToken();
 
+	if (!clientId) {
+		return {
+			status: "needs-config",
+			note: "Set SECURITY_CANVAS_CLIENT_ID to an app registration that declares IdentityRiskyAgent.Read.All.",
+			agents: [],
+			detections: {},
+		};
+	}
+
+	const token = await getToken();
 	if (!token) {
 		return {
-			live: false,
-			needsAuth: Boolean(clientId),
-			note: clientId
-				? "Not signed in. Use Connect to sign in and load live tenant data."
-				: "SECURITY_CANVAS_CLIENT_ID is not set — showing sample data. See README: Real tenant data.",
-			...SAMPLE_DATA,
+			status: "needs-auth",
+			note: "Sign in to load risky agents from your tenant.",
+			agents: [],
+			detections: {},
 		};
 	}
 
@@ -238,140 +254,28 @@ export async function loadTenantData({ limit = 25 } = {}) {
 		}
 
 		return {
-			live: true,
-			needsAuth: false,
+			status: "connected",
 			note:
 				agents.length === 0
 					? "Connected. No agents currently match the risk filters."
-					: `Live tenant data — ${agents.length} agent(s).`,
+					: `${agents.length} agent(s) at risk.`,
 			agents,
 			detections,
 		};
 	} catch (err) {
+		// 401 means the cached token died; treat it as a sign-in prompt rather
+		// than an error the user cannot act on.
+		if (err.status === 401) {
+			return { status: "needs-auth", note: "Session expired. Sign in again.", agents: [], detections: {} };
+		}
 		const hint =
 			err.status === 403
-				? "The token lacks IdentityRiskyAgent.Read.All. The Azure CLI cannot request this scope; use SECURITY_CANVAS_CLIENT_ID with an app registration."
+				? "The token lacks IdentityRiskyAgent.Read.All. Confirm admin consent was granted for the app registration, and that you hold a Security Reader, Security Operator, or Security Administrator role."
 				: err.status === 404
-					? "The Graph beta agent risk APIs may not be enabled in this tenant."
-					: err.status === 401
-						? "Token expired. Use Connect to sign in again."
+					? "The Graph beta agent risk APIs may not be enabled in this tenant. Microsoft Agent 365 licensing is required."
+					: err.status === 429
+						? "Throttled by Microsoft Graph. Wait a moment and retry."
 						: "";
-		return {
-			live: false,
-			needsAuth: Boolean(clientId),
-			note: `Graph request failed: ${err.message}. ${hint}`.trim(),
-			...SAMPLE_DATA,
-		};
+		return { status: "error", note: err.message, hint, agents: [], detections: {} };
 	}
 }
-
-/**
- * Sample tenant used when Graph is unreachable. Clearly labeled in the UI.
- * Mirrors the real schema so the scoring path is identical either way.
- */
-export const SAMPLE_DATA = {
-	agents: [
-		{
-			id: "sample-invoice-bot",
-			agentDisplayName: "Invoice Processing Bot",
-			identityType: "agentIdentity",
-			blueprintId: "bp-finance-001",
-			riskLevel: "high",
-			riskState: "atRisk",
-			isEnabled: true,
-		},
-		{
-			id: "sample-repo-agent",
-			agentDisplayName: "Repo Maintenance Agent",
-			identityType: "agentIdentity",
-			blueprintId: "bp-devops-004",
-			riskLevel: "high",
-			riskState: "atRisk",
-			isEnabled: true,
-		},
-		{
-			id: "sample-support-triage",
-			agentDisplayName: "Support Triage Assistant",
-			identityType: "agentUser",
-			riskLevel: "medium",
-			riskState: "atRisk",
-			isEnabled: true,
-			isProcessing: true,
-		},
-		{
-			id: "sample-doc-summarizer",
-			agentDisplayName: "Document Summarizer",
-			identityType: "agentIdentity",
-			blueprintId: "bp-productivity-012",
-			riskLevel: "low",
-			riskState: "atRisk",
-			isEnabled: true,
-		},
-	],
-	detections: {
-		"sample-invoice-bot": [
-			{
-				id: "det-1",
-				riskEventType: "suspiciousCredentialUsage",
-				riskLevel: "high",
-				detectedDateTime: "2026-08-26T09:04:00Z",
-				riskEvidence: "New client secret added to blueprint bp-finance-001 and used 4 minutes later.",
-				identityId: "sample-invoice-bot",
-			},
-			{
-				id: "det-2",
-				riskEventType: "entraDirectoryReconnaissance",
-				riskLevel: "medium",
-				detectedDateTime: "2026-08-26T09:12:00Z",
-				riskEvidence: "Enumerated 1,240 directory objects in 90 seconds.",
-				identityId: "sample-invoice-bot",
-			},
-		],
-		"sample-repo-agent": [
-			{
-				id: "det-3",
-				riskEventType: "unfamiliarResourceAccess",
-				riskLevel: "high",
-				detectedDateTime: "2026-08-26T11:20:00Z",
-				riskEvidence: "Accessed 3 repositories outside its established baseline.",
-				identityId: "sample-repo-agent",
-			},
-			{
-				id: "det-4",
-				riskEventType: "failedAccessAttempt",
-				riskLevel: "medium",
-				detectedDateTime: "2026-08-26T11:25:00Z",
-				riskEvidence: "17 failed token exchanges against Key Vault.",
-				identityId: "sample-repo-agent",
-			},
-		],
-		"sample-support-triage": [
-			{
-				id: "det-5",
-				riskEventType: "signInSpike",
-				riskLevel: "low",
-				detectedDateTime: "2026-08-26T08:00:00Z",
-				riskEvidence: "Sign-in volume 8x the 30-day baseline.",
-				identityId: "sample-support-triage",
-			},
-		],
-		"sample-doc-summarizer": [],
-	},
-};
-
-/**
- * Illustrative blast-radius context for the sample agents only.
- * Never applied to live tenant data — that would fabricate evidence.
- */
-export const SAMPLE_EXPOSURE = {
-	"sample-invoice-bot": {
-		dataExposure: { highestLabel: "Highly Confidential", labelIds: ["fin-conf"], dlpMatches: 3 },
-	},
-	"sample-repo-agent": {
-		codeExposure: {
-			writeRepos: ["contoso/payments-api", "contoso/internal-tools"],
-			productionRepos: ["contoso/payments-api"],
-			canApprovePullRequests: true,
-		},
-	},
-};

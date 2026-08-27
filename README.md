@@ -61,9 +61,14 @@ mirrors how [`mobile-canvas-ghcp`](https://github.com/Redth/mobile-canvas-ghcp) 
 
 ### Real tenant data
 
-The canvas ships with clearly labeled **sample data** so it is useful immediately. To load your own
-tenant, click **Connect** in the canvas header and complete the device-code prompt. The queue
-refreshes automatically once sign-in finishes.
+The canvas opens on a sign-in screen and shows **only real data from your tenant**. Click **Sign in**,
+complete the device-code prompt, and the triage queue loads automatically. Sign-in is cached per
+device, so it is a one-time step.
+
+There is deliberately **no sample or demo mode**. A security console that can display invented agents
+is worse than one that shows nothing: an analyst who mistakes placeholder rows for their tenant draws
+exactly the wrong conclusion, and the failure is silent. Every non-connected state instead names the
+problem — missing configuration, expired session, insufficient permission, or missing licensing.
 
 Connect needs an app registration. **The Azure CLI cannot be used** — it is a first-party app
 pre-authorized for a fixed set of Graph scopes, and `IdentityRiskyAgent.Read.All` is not among them,
@@ -103,13 +108,13 @@ export SECURITY_CANVAS_TENANT_ID=<tenantId>   # optional; defaults to "organizat
 Tokens cache at `~/.copilot/security-canvas/token-cache.json` (mode `0600`) and refresh silently, so
 sign-in is a one-time step per device.
 
-**Requirements for live data:** `IdentityRiskyAgent.Read.All` with admin consent; a Security Reader,
-Security Operator, or Security Administrator role; and Microsoft Agent 365 licensing. Without all
-three the canvas stays on sample data and says why.
+**Requirements:** `IdentityRiskyAgent.Read.All` with admin consent; a Security Reader, Security
+Operator, or Security Administrator role; and Microsoft Agent 365 licensing. Missing any of the three
+surfaces a specific message rather than an empty queue.
 
 > **Conditional Access.** Tenants enforcing Token Protection or device compliance may block sign-in
 > from an unmanaged device (`AADSTS530084`, `AADSTS53003`). That is a policy decision, not a bug —
-> the canvas reports it in the note bar rather than failing silently.
+> the canvas names the error and offers a retry rather than failing silently.
 
 > **Why the canvas has no npm dependencies.** A plugin install is a plain file copy: `npm install`
 > never runs and `node_modules` never exists at runtime. Verified against a real install directory.
@@ -201,8 +206,8 @@ Register in `.mcp.json` (already scaffolded), or point any MCP client at `node d
   HTTP 200 with 14 real agents, scored end-to-end through this engine. Three scoring bugs were found
   only because real data was used — see Scoring below.
 - **Purview and GitHub exposure are caller-supplied.** `assess_agent_blast_radius` accepts them as
-  arguments; automatic collection is not wired yet. In the canvas, blast-radius context is attached
-  to sample agents only — never to live tenant data, which would fabricate evidence.
+  arguments; automatic collection is not wired yet. The canvas reports both pillars as coverage gaps
+  on every agent, so a score is never mistaken for a complete picture.
 - **Defender is intentionally absent.** Use the GA [Sentinel MCP server](https://learn.microsoft.com/azure/sentinel/datalake/sentinel-mcp-get-started)
   for incidents rather than re-implementing it.
 

@@ -2,7 +2,7 @@ import http from "node:http";
 import { createCanvas, joinSession } from "@github/copilot-sdk/extension";
 import { assessAgent } from "./vendor/correlate.mjs";
 import { describeDetection } from "./vendor/risk-catalog.mjs";
-import { loadTenantData, SAMPLE_EXPOSURE, beginDeviceCode, getConfig } from "./graph.mjs";
+import { loadTenantData, beginDeviceCode, getConfig } from "./graph.mjs";
 
 /**
  * Security Canvas — a triage queue for risky Entra agent identities.
@@ -19,11 +19,12 @@ import { loadTenantData, SAMPLE_EXPOSURE, beginDeviceCode, getConfig } from "./g
  */
 
 const state = {
-	live: false,
-	note: "Loading…",
-	needsAuth: false,
-	// Device-code prompt shown in the UI while sign-in is pending.
-	auth: null, // { userCode, verificationUri } | { error }
+	// loading | needs-config | needs-auth | signing-in | error | connected
+	status: "loading",
+	note: "",
+	hint: "",
+	// Device-code prompt shown while sign-in is pending.
+	auth: null, // { userCode, verificationUri }
 	assessments: [],
 	selectedId: null,
 	lastRefresh: null,
@@ -43,31 +44,31 @@ function broadcast() {
 
 /** Pull tenant data and re-score every agent through the shared engine. */
 async function refresh() {
-	const { agents, detections, live, note, needsAuth } = await loadTenantData({ limit: 25 });
+	const { agents, detections, status, note, hint } = await loadTenantData({ limit: 25 });
 
-	state.live = live;
-	state.note = note;
-	state.needsAuth = Boolean(needsAuth);
-	if (live) state.auth = null;
+	state.status = status;
+	state.note = note || "";
+	state.hint = hint || "";
 	state.lastRefresh = new Date().toISOString();
+
+	if (status !== "connected") {
+		state.assessments = [];
+		state.selectedId = null;
+		broadcast();
+		return;
+	}
+
 	state.assessments = agents
 		.map((agent) => {
-			// Blast-radius context is illustrative and applies to sample data
-			// only. Attaching it to a real tenant would fabricate evidence.
-			const exposure = live ? {} : (SAMPLE_EXPOSURE[agent.id] ?? {});
-			const degraded = {};
-			if (!exposure.dataExposure) degraded.purview = "No Purview exposure data; data risk not evaluated.";
-			if (!exposure.codeExposure) degraded.github = "No GitHub exposure data; code risk not evaluated.";
-			degraded.defender = "Defender not wired; use the Sentinel MCP server for incidents.";
+			// Purview and GitHub exposure are not collected automatically yet.
+			// Report them as gaps so the score is never read as complete.
+			const degraded = {
+				purview: "Purview exposure not collected; data risk not evaluated.",
+				github: "GitHub exposure not collected; code risk not evaluated.",
+				defender: "Defender not wired; use the Sentinel MCP server for incidents.",
+			};
+			const assessment = assessAgent({ agent, detections: detections[agent.id] ?? [], degraded });
 
-			const assessment = assessAgent({
-				agent,
-				detections: detections[agent.id] ?? [],
-				...exposure,
-				degraded,
-			});
-
-			// Attach enriched detections so the detail pane can explain each one.
 			assessment.detectionDetail = (detections[agent.id] ?? []).map((d) => {
 				const meta = describeDetection(d.riskEventType);
 				return {
@@ -141,13 +142,15 @@ const server = http.createServer(async (req, res) => {
 	// render it; the token arrives asynchronously and triggers a refresh.
 	if (req.method === "POST" && req.url === "/connect") {
 		if (!getConfig().clientId) {
-			state.auth = { error: "SECURITY_CANVAS_CLIENT_ID is not set. See README: Real tenant data." };
+			state.status = "needs-config";
+			state.note = "SECURITY_CANVAS_CLIENT_ID is not set.";
 			broadcast();
 			return json({ ok: false });
 		}
 		beginDeviceCode((p) => {
+			state.status = "signing-in";
 			state.auth = { userCode: p.userCode, verificationUri: p.verificationUri };
-			state.note = "Sign-in pending — enter the code below.";
+			state.note = "Waiting for sign-in.";
 			broadcast();
 		})
 			.then(async () => {
@@ -155,7 +158,10 @@ const server = http.createServer(async (req, res) => {
 				await refresh();
 			})
 			.catch((e) => {
-				state.auth = { error: String(e.message || e) };
+				state.status = "error";
+				state.auth = null;
+				state.note = String(e.message || e);
+				state.hint = "Sign-in did not complete. Try again, or check your tenant's Conditional Access policies.";
 				broadcast();
 			});
 		return json({ ok: true });
@@ -216,7 +222,7 @@ const canvas = createCanvas({
 				"Read the current triage queue: every risky agent with its composite score, severity, and contributing factors.",
 			inputSchema: { type: "object", properties: {} },
 			handler: () => ({
-				live: state.live,
+				status: state.status,
 				note: state.note,
 				count: state.assessments.length,
 				agents: state.assessments.map((a) => ({
@@ -272,6 +278,7 @@ const canvas = createCanvas({
 				return await new Promise((resolve, reject) => {
 					let resolved = false;
 					beginDeviceCode((p) => {
+						state.status = "signing-in";
 						state.auth = { userCode: p.userCode, verificationUri: p.verificationUri };
 						broadcast();
 						resolved = true;
@@ -286,7 +293,9 @@ const canvas = createCanvas({
 							await refresh();
 						})
 						.catch((e) => {
-							state.auth = { error: String(e.message || e) };
+							state.status = "error";
+							state.auth = null;
+							state.note = String(e.message || e);
 							broadcast();
 							if (!resolved) reject(e);
 						});
@@ -299,7 +308,7 @@ const canvas = createCanvas({
 			inputSchema: { type: "object", properties: {} },
 			handler: async () => {
 				await refresh();
-				return { refreshed: true, live: state.live, count: state.assessments.length, note: state.note };
+				return { refreshed: true, status: state.status, count: state.assessments.length, note: state.note };
 			},
 		},
 	],
@@ -312,7 +321,7 @@ const canvas = createCanvas({
 		return {
 			url: `http://127.0.0.1:${port}`,
 			title: "Security Canvas",
-			status: state.live ? "live tenant" : "sample data",
+			status: state.status === "connected" ? `${state.assessments.length} at risk` : "sign in required",
 		};
 	},
 
@@ -410,28 +419,38 @@ function html() {
   li:before{content:"→";position:absolute;left:0;color:var(--info)}
   .gap{font-size:11px;color:var(--dim);padding:3px 0}
   .empty{padding:40px 20px;text-align:center;color:var(--dim);font-size:12px}
-  .authbox{padding:12px 16px;background:#1c2128;border-bottom:1px solid var(--border);
-           font-size:12px;flex-shrink:0}
-  .authbox .code{font-family:ui-monospace,SFMono-Regular,monospace;font-size:20px;
-                 font-weight:600;letter-spacing:.12em;color:var(--info);
-                 background:var(--bg);padding:7px 12px;border-radius:6px;
-                 display:inline-block;margin:6px 0;user-select:all}
-  .authbox a{color:var(--info)}
-  .authbox.err{color:var(--critical)}
+  .gate{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+        padding:40px 28px;text-align:center;gap:12px}
+  .gate .icon{width:40px;height:40px;opacity:.5}
+  .gate h2{font-size:16px;font-weight:600}
+  .gate p{font-size:13px;color:var(--muted);max-width:420px;line-height:1.6}
+  .gate .hint{font-size:12px;color:var(--dim);max-width:460px}
+  .gate code{font-family:ui-monospace,SFMono-Regular,monospace;font-size:11.5px;
+             background:var(--panel);padding:2px 6px;border-radius:4px;color:var(--fg)}
+  .gate button{padding:8px 20px;font-size:13px;margin-top:4px}
+  .code{font-family:ui-monospace,SFMono-Regular,monospace;font-size:30px;font-weight:600;
+        letter-spacing:.16em;color:var(--info);background:var(--panel);
+        border:1px solid var(--border);padding:14px 26px;border-radius:10px;
+        display:inline-block;user-select:all;margin:4px 0}
+  .gate a{color:var(--info)}
+  .spin{width:15px;height:15px;border:2px solid var(--border);border-top-color:var(--info);
+        border-radius:50%;animation:sp .7s linear infinite;display:inline-block;
+        vertical-align:-2px;margin-right:7px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .err{color:var(--critical)}
   .actions{display:flex;gap:8px;margin:16px 0 4px}
 </style></head>
 <body>
 <div class="wrap">
   <header>
     <h1>Security Canvas</h1>
-    <span id="mode" class="badge sample">sample</span>
+    <span id="count" class="badge" style="display:none"></span>
     <span class="spacer"></span>
-    <button id="connect" class="primary" style="display:none">Connect</button>
-    <button id="refresh">Refresh</button>
+    <button id="refresh" style="display:none">Refresh</button>
   </header>
-  <div class="note" id="note">Loading…</div>
-  <div id="authbox" class="authbox" style="display:none"></div>
-  <div class="cols">
+  <div class="note" id="note" style="display:none"></div>
+  <div id="gate" class="gate"></div>
+  <div class="cols" id="cols" style="display:none">
     <div class="queue" id="queue"></div>
     <div class="detail" id="detail"></div>
   </div>
@@ -447,31 +466,30 @@ function html() {
 
   function render(s) {
     current = s;
-    const mode = document.getElementById('mode');
-    mode.textContent = s.live ? 'live tenant' : 'sample data';
-    mode.className = 'badge ' + (s.live ? 'live' : 'sample');
-    document.getElementById('note').textContent = s.note || '';
+    const gate = document.getElementById('gate');
+    const cols = document.getElementById('cols');
+    const note = document.getElementById('note');
+    const count = document.getElementById('count');
+    const refresh = document.getElementById('refresh');
 
-    document.getElementById('connect').style.display = (!s.live && !s.auth) ? '' : 'none';
+    const connected = s.status === 'connected';
+    gate.style.display = connected ? 'none' : '';
+    cols.style.display = connected ? '' : 'none';
+    refresh.style.display = connected ? '' : 'none';
+    count.style.display = connected ? '' : 'none';
+    note.style.display = (connected && s.note) ? '' : 'none';
+    note.textContent = s.note || '';
 
-    const ab = document.getElementById('authbox');
-    if (s.auth && s.auth.error) {
-      ab.style.display = ''; ab.className = 'authbox err';
-      ab.textContent = 'Sign-in failed: ' + s.auth.error;
-    } else if (s.auth && s.auth.userCode) {
-      ab.style.display = ''; ab.className = 'authbox';
-      ab.innerHTML = 'Open <a href="' + esc(s.auth.verificationUri) + '" target="_blank">' +
-        esc(s.auth.verificationUri) + '</a> and enter:<br/>' +
-        '<span class="code">' + esc(s.auth.userCode) + '</span><br/>' +
-        '<span style="color:var(--muted)">Waiting for sign-in\u2026 the queue refreshes automatically.</span>';
-    } else {
-      ab.style.display = 'none';
-    }
+    if (!connected) { gate.innerHTML = gateHtml(s); wireGate(); return; }
+
+    count.textContent = s.assessments.length + ' at risk';
+    count.className = 'badge live';
 
     const q = document.getElementById('queue');
     if (!s.assessments.length) {
-      q.innerHTML = '<div class="empty">No agents in the queue.</div>';
-      document.getElementById('detail').innerHTML = '';
+      q.innerHTML = '<div class="empty">No agents match the risk filters.</div>';
+      document.getElementById('detail').innerHTML =
+        '<div class="empty">Nothing to triage. Entra reports no agents at risk.</div>';
       return;
     }
 
@@ -490,6 +508,49 @@ function html() {
       r.onclick = () => post('/select', { agentId: r.dataset.id }));
 
     renderDetail(s.assessments.find(a => a.agentId === s.selectedId));
+  }
+
+  function gateHtml(s) {
+    const shield = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3l7 3v6c0 4.4-3 8.3-7 9-4-0.7-7-4.6-7-9V6l7-3z"/></svg>';
+    if (s.status === 'loading')
+      return shield + '<h2>Loading</h2><p><span class="spin"></span>Checking your session\u2026</p>';
+
+    if (s.status === 'signing-in' && s.auth)
+      return shield +
+        '<h2>Finish signing in</h2>' +
+        '<p>Open <a href="' + esc(s.auth.verificationUri) + '" target="_blank">' + esc(s.auth.verificationUri) +
+        '</a> and enter this code:</p>' +
+        '<div class="code">' + esc(s.auth.userCode) + '</div>' +
+        '<p class="hint"><span class="spin"></span>Waiting\u2026 the queue loads automatically once you finish.</p>';
+
+    if (s.status === 'needs-config')
+      return shield +
+        '<h2>Configuration required</h2>' +
+        '<p>Set <code>SECURITY_CANVAS_CLIENT_ID</code> to an app registration that declares ' +
+        '<code>IdentityRiskyAgent.Read.All</code>, then reopen this canvas.</p>' +
+        '<p class="hint">The Azure CLI cannot be used: it is pre-authorized for a fixed set of Graph ' +
+        'scopes that excludes agent risk. See the README for the four-command setup.</p>';
+
+    if (s.status === 'error')
+      return shield +
+        '<h2 class="err">Could not load agents</h2>' +
+        '<p class="err">' + esc(s.note) + '</p>' +
+        (s.hint ? '<p class="hint">' + esc(s.hint) + '</p>' : '') +
+        '<button class="primary" id="gate-btn">Try again</button>';
+
+    // needs-auth
+    return shield +
+      '<h2>Sign in to your tenant</h2>' +
+      '<p>Security Canvas reads risky agent identities from Microsoft Entra ID Protection. ' +
+      'Sign in to load them.</p>' +
+      '<button class="primary" id="gate-btn">Sign in</button>' +
+      '<p class="hint">Requires <code>IdentityRiskyAgent.Read.All</code> with admin consent and a ' +
+      'Security Reader role. Your sign-in is cached on this device.</p>';
+  }
+
+  function wireGate() {
+    const b = document.getElementById('gate-btn');
+    if (b) b.onclick = () => post('/connect');
   }
 
   function renderDetail(a) {
@@ -537,7 +598,6 @@ function html() {
   }
 
   document.getElementById('refresh').onclick = () => post('/refresh');
-  document.getElementById('connect').onclick = () => post('/connect');
 </script>
 </body></html>`;
 }
