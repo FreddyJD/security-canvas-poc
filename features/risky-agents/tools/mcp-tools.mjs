@@ -40,9 +40,10 @@ export function registerTools(server, repository) {
 		{
 			title: "List risky agents",
 			description:
-				"List Microsoft Entra agent identities currently flagged as risky by Entra ID Protection. " +
-				"Returns a triage-ordered summary (highest severity first) with the reason each agent was flagged. " +
-				"Use this to answer questions like 'what are my high-risk agents?'.",
+				"List Microsoft Entra agent identities currently flagged as risky by Entra ID Protection, with a " +
+				"composite score and the reason each agent was flagged, triage-ordered (highest severity first). " +
+				"Use this to answer 'what are my high-risk agents?' when there is no canvas to show — in the " +
+				"Copilot app prefer the show_risky_agents canvas action, which puts the same agents on screen.",
 			inputSchema: {
 				riskLevels: z
 					.array(z.enum(RISK_LEVELS))
@@ -62,11 +63,11 @@ export function registerTools(server, repository) {
 		},
 		async ({ riskLevels, riskStates, includeDetections, limit }) => {
 			try {
-				const agents = await repository.listAssessments({
-					riskLevels: riskLevels ?? ["high", "medium"],
-					riskStates: riskStates ?? ["atRisk", "confirmedCompromised"],
-					includeDetections: includeDetections ?? false,
-					limit: limit ?? 25,
+				const agents = await triage.listRiskyAgents(ctx, {
+					riskLevels,
+					riskStates,
+					includeDetections,
+					limit,
 				});
 
 				if (agents.length === 0) {

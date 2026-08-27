@@ -25,9 +25,19 @@
   },
   "include": ["features/**/*", "platform/**/*", "test/**/*", "types/**/*", "extension.mjs", "mcp.mjs"],
 
-  // The e2e smoke script and the preview harness are executables, not shipped
-  // source: both deliberately traffic in the loosely-typed JSON that crosses a
-  // wire, and annotating every protocol response would obscure what they do.
-  // `test:e2e` and `test:preview` are where they earn their keep.
-  "exclude": ["node_modules", "test/e2e-smoke.mjs", "test/details-preview.mjs"]
+  // Executable harnesses, not shipped source. They deliberately traffic in the
+  // loosely-typed JSON that crosses a wire — MCP protocol responses, SSE frames,
+  // hand-written tenant fixtures — and annotating every one would obscure what
+  // they assert. They earn their keep by running:
+  //   test/e2e-smoke.mjs       npm run test:e2e         real MCP protocol
+  //   test/panel-smoke.mjs     npm run test:panel       the real Agents panel over HTTP
+  //   test/panel-preview.mjs   npm run preview          the panel on fixtures, to look at
+  //   test/details-preview.mjs npm run preview:details  the details page on fixtures
+  "exclude": [
+    "node_modules",
+    "test/e2e-smoke.mjs",
+    "test/panel-smoke.mjs",
+    "test/panel-preview.mjs",
+    "test/details-preview.mjs"
+  ]
 }

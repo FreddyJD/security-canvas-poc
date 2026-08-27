@@ -255,6 +255,41 @@ export function buildMetrics(agents, summary = null) {
 }
 
 /**
+ * Why the table is empty, in the reader's terms.
+ *
+ * "No agents match these filters" is the right answer for a search that found
+ * nothing, and the wrong one for a tenant with no risky agents — the first says
+ * "try again", the second is the good news the reader asked for. Getting this
+ * wrong on a security console reads as a broken filter and sends someone
+ * hunting for agents that genuinely are not there.
+ *
+ * Only claims the tenant is clean when risk is the *sole* narrowing. With a
+ * search term or a platform pill also active, "no risky agents" would be a
+ * statement about the whole tenant made from a narrowed view.
+ *
+ * @param {InventoryFilters} filters
+ * @returns {string}
+ */
+export function emptyMessage(filters) {
+	const risks = filters.risks ?? [];
+	const onlyRisk =
+		risks.length > 0 &&
+		!(filters.search ?? "").trim() &&
+		(filters.platforms ?? []).length === 0 &&
+		(filters.slice ?? "all") === "all";
+
+	if (!onlyRisk) return "No agents match these filters.";
+
+	const bands = risks.map((r) => RISK_LABEL[r]?.toLowerCase() ?? r);
+	const list =
+		bands.length === 1
+			? bands[0]
+			: `${bands.slice(0, -1).join(", ")} or ${bands[bands.length - 1]}`;
+
+	return `No agents are currently at ${list} risk. Nothing to triage.`;
+}
+
+/**
  * The agents matching every active filter.
  *
  * Filters combine with AND, which is what a reader expects: narrowing by

@@ -29,17 +29,38 @@ Triage needs both — and in the demo above, adding data and code context moves 
 Two hosts and four features ship from one repo. Each feature owns its full stack; the hosts are
 composition roots.
 
+### One list, one definition of "risky"
+
+"Show me the risky agents" and "show me my agents" land on the **same table**. The first is the
+second with the risk filter applied.
+
+There used to be a separate Security Canvas — a two-pane triage queue over Entra's `riskyAgents`,
+with its own rows, its own sort order and its own empty state. It was deleted, because it was a
+second answer to a question the Agents table already answers, and two surfaces that can disagree
+about which agents are risky is worse than one that cannot.
+
+The merge is safe because the two were never really different data. An inventory row's `riskLevel`
+**is** Entra ID Protection risk: `AgentRiskComposer` joins `riskyAgents`, `riskyUsers` and
+`riskyServicePrincipals` server-side at collect time and stores the max of the principal's level and
+its detection levels. The triage queue was re-deriving, client-side and via a lossier key, a value
+the row already carried.
+
+What the queue had and a table row does not is *depth* — per-detection history and the scored
+explanation behind a level. That did not go away; it moved to where depth belongs, as
+`explain_agent_risk`. Clicking a row hands the agent to the model with that tool named explicitly,
+so the answer is grounded in detections rather than inferred from the word "high".
+
 | Feature | Question it answers | Backend |
 |---|---|---|
-| `agent-inventory` | "What are my agents?" | ZTAI unified inventory (`/rp/zerotrustai`) — the estate across M365 Copilot, Copilot Studio, Endpoint |
+| `agent-inventory` | "What are my agents?" **and** "which need triage?" | ZTAI unified inventory (`/rp/zerotrustai`) — the estate across M365 Copilot, Copilot Studio, Endpoint |
 | `agent-details` | "Tell me more about *this* agent" | The same inventory, plus `agents/{id}` and `agents/{id}/exposure` — identity, score, access, and a pan-and-zoom graph |
-| `risky-agents` | "What needs triage?" | Entra ID Protection (`/beta/identityProtection`) — identity risk, scored cross-pillar |
+| `risky-agents` | "*Why* is this one risky?" | Entra ID Protection (`/beta/identityProtection`) — detection history, scored cross-pillar |
 | `purview-protection` | "Protect my sensitive data" | None — Purview has no API for this, so it produces a script: guided steps, or one script Copilot runs (see below) |
 
 All four use the same layering:
 
 ```
-HOSTS    — extension.mjs (four canvas panels) · mcp.mjs (stdio; VS Code, Security Copilot, Foundry)
+HOSTS    — extension.mjs (three canvas panels) · mcp.mjs (stdio; VS Code, Security Copilot, Foundry)
 TOOLS    — canvas actions + MCP tools — thin adapters, no logic
 VIEWS    — screens; the model routes to them by name
 USECASES — all the logic: auth gaps, failures, filtering, refresh  ← the middle layer
@@ -173,14 +194,18 @@ previous fill.
 
 `npm run preview:details` serves the page against fixtures if you want to look at it without a tenant.
 
-### Why a view registry, not generic components
+### Why named screens, not generic components
 
-The canvas exposes `show_triage_queue` / `show_agent_detail` and the model picks one. It does
-**not** get primitives to compose tables from — the model already has a general-purpose renderer
-(markdown in chat), so generic primitives would produce a worse markdown table that costs more
-tokens, and hand the analyst a different layout on every query. Naming the screens means the canvas
-owns sorting, empty states, keyboard nav and hover once. Adding a screen is: write a view, register
-it, expose a matching `show_<view>` action.
+The canvas exposes `show_agent_inventory` / `show_risky_agents` / `filter_agent_inventory` and the
+model picks one. It does **not** get primitives to compose tables from — the model already has a
+general-purpose renderer (markdown in chat), so generic primitives would produce a worse markdown
+table that costs more tokens, and hand the analyst a different layout on every query. Naming the
+screens means the canvas owns sorting, empty states, keyboard nav and hover once.
+
+Note what `show_risky_agents` is: not a screen, a *filter*. It clears the other filters, pins the
+risk bands and sorts worst-first. That is deliberate — a named action gives the model an obvious
+target for "what needs triage?" without a second screen having to exist, and the analyst can widen
+it back to the estate by clicking a pill, because it is the same table they were already looking at.
 
 ## Install
 
@@ -204,9 +229,9 @@ mirrors how [`mobile-canvas-ghcp`](https://github.com/Redth/mobile-canvas-ghcp) 
 
 ### Sign in
 
-Open Security Canvas and click **Sign in with Microsoft**. Your browser opens, you pick your work
-account, and the triage queue loads. Nothing to configure, no codes to copy. Sign-in is cached on the
-device, so it is a one-time step.
+Open the **Agents** panel and click **Sign in with Microsoft**. Your browser opens, you pick your
+work account, and the inventory loads. Nothing to configure, no codes to copy. Sign-in is cached on
+the device, so it is a one-time step.
 
 The canvas ships with its own Entra app registration (a public client, which holds no secret — the
 client id is safe to publish and is what makes one-click sign-in possible). Under the hood it uses
@@ -233,8 +258,8 @@ To use your own app registration instead, set `SECURITY_CANVAS_CLIENT_ID` or wri
 | `get_agent_details` | Everything known about **one** agent: identity facts, the secure score and the goals it fails, its Conditional Access / Defender / Purview DLP posture, and what it can reach. Answers "tell me more about X". |
 | `get_protect_agents_playbook` | The agent-scoped DLP playbook. Defaults to guided steps for the user to run; `mode: "auto"` returns one script for the agent to run, and must be asked for. |
 | `get_agent_estate_summary` | Tenant totals: counts by risk level, by platform, and coverage gaps. |
-| `list_risky_agents` | Triage-ordered list of Entra-flagged agents. The security entry point. |
-| `explain_agent_risk` | One agent's detection history in plain language, with remediation. |
+| `list_risky_agents` | Triage-ordered list of Entra-flagged agents, with composite scores. The portable peer of the `show_risky_agents` canvas action — in the Copilot app the canvas puts the same agents on screen. |
+| `explain_agent_risk` | One agent's detection history in plain language, with remediation. **The depth behind a risk level** — what the Agents table sends you to. |
 | `assess_agent_blast_radius` | Correlates Entra risk with Purview + GitHub exposure. |
 | `list_recent_agent_detections` | Tenant-wide activity in a time window, grouped by type. |
 | `update_agent_risk_state` | dismiss / confirmCompromised / confirmSafe. **Gated.** |
@@ -291,9 +316,11 @@ reasoned, not empirical.
 ```bash
 npm install       # only the MCP SDK + zod; the canvas itself needs no deps
 
-npm test          # 235 unit tests
+npm test          # 255 unit tests
 npm run typecheck # tsc --noEmit over JSDoc-annotated ESM
 npm run test:e2e  # real MCP protocol against a fake tenant, no credentials needed
+npm run test:panel # boots the real Agents panel and drives it over HTTP
+npm run preview   # serves the panel on fixture data to look at in a browser
 npm run inspect   # browse tools in the MCP Inspector
 ```
 
@@ -343,9 +370,9 @@ Feature-first: everything about risky agents lives in one directory, in dependen
 extension.mjs                    canvas host — composition root (must stay at repo root)
 mcp.mjs                          MCP host — stdio (stdout is JSON-RPC; never console.log)
 
-features/agent-inventory/        "what are my agents?" -- the ZTAI unified estate
+features/agent-inventory/        "what are my agents?" AND "which need triage?" -- the ZTAI estate
   domain/       types.d.ts       the ADR-077 catalog + summary contracts
-                presentation.mjs labels, risk meter, metrics, filter/sort rules
+                presentation.mjs labels, risk meter, metrics, filter/sort/empty-state rules
   data/         inventory-repository.mjs
   usecases/     inventory-browse.mjs · store.mjs
   components/   agent-table.mjs · metric-card.mjs · filter-bar.mjs
@@ -362,25 +389,18 @@ features/purview-protection/     "protect my sensitive data" -- a PowerShell pla
   views/        playbook-screen.mjs · playbook-server.mjs · client.mjs · styles.mjs
   tools/        playbook-tools.mjs
 
-features/risky-agents/           "what needs triage?" -- Entra identity risk
+features/risky-agents/           "*why* is this agent risky?" -- Entra identity risk, MCP-only
   domain/       types.d.ts       shared contracts, incl. the AgentSource port
                 scoring.mjs      the scoring engine — the actual product
                 risk-catalog.mjs detection knowledge base — tune this
   data/         agent-repository.mjs   the only layer that knows Graph exists
-  usecases/     agent-triage.mjs the middle layer: all the logic
-                store.mjs        observable state, broadcast over SSE
-  components/   primitives.mjs   esc(), badges, cards — every string escaped here
-                agent-list.mjs   queue rows          (stateless)
-                agent-detail.mjs evidence pane       (stateless)
-                connection-gate.mjs  sign-in / error / loading
-  views/        registry.mjs     the routing table the model targets
-                triage-queue.mjs the two-pane screen
-                canvas-server.mjs local HTTP: serves modules, maps routes to use cases
-                client.mjs       browser entry — SSE in, delegated clicks out
-                styles.mjs       canvas CSS
-  tools/        canvas-actions.mjs  show_* actions for the model
-                mcp-tools.mjs       5 MCP tools, both delegating to usecases/
-                render-text.mjs     prose for models (the MCP peer of components/)
+  usecases/     agent-triage.mjs the middle layer: stateless, returns plain data
+  tools/        mcp-tools.mjs       5 MCP tools, all delegating to usecases/
+                render-text.mjs     prose for models
+
+                No views/ or components/: this feature owns no screen. The
+                Agents table is the only agent list, and it links here for the
+                per-detection depth a table row cannot carry.
 
 platform/       graph.mjs        Graph client — token provider injected
                 inventory-client.mjs  ZTAI inventory client (Graph RP / portal proxy)
@@ -392,15 +412,16 @@ platform/       graph.mjs        Graph client — token provider injected
                 html.mjs         esc() — the one escaping boundary, shared by all
 
 test/           purview-playbook.test.ts      91 — injection defence, playbook shape, coverage, auto mode
+                inventory-browse.test.ts      54 — use cases, paging, components, risky view, investigate
                 scoring.test.ts               37 — scoring properties + live-data regressions
-                inventory-browse.test.ts      35 — use cases, paging, and every component
                 inventory-presentation.test.ts 31 — labels, filters, sort stability
-                components.test.ts            22 — rendering, escaping, routing
-                agent-triage.test.ts          20 — every failure mode, no network
                 graph.test.ts                 14 — requests, paging, errors, injection
                 agent-repository.test.ts      10 — fetch strategy and mapping
+                agent-triage.test.ts          10 — query defaults, grouping, auth classification
                 canvas-http.test.ts            8 — the browser-module allowlist (a security boundary)
                 e2e-smoke.mjs                 real MCP protocol, stub at the Graph boundary
+                panel-smoke.mjs               the real Agents panel over HTTP, stub repository
+                panel-preview.mjs             not a test — serves the panel on fixtures to look at
 ```
 
 Components are loaded twice — by Node in tests and by the browser as ES modules over the canvas's

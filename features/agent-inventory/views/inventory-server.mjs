@@ -15,6 +15,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createEventStream, createServer, listen, readJson, serveModule } from "../../../platform/canvas-http.mjs";
+import { requestInvestigation } from "../tools/canvas-actions.mjs";
 import * as inventory from "../usecases/inventory-browse.mjs";
 import { INVENTORY_STYLES } from "./styles.mjs";
 
@@ -53,6 +54,18 @@ export async function startInventoryServer(ctx) {
 		if (req.method === "POST" && url.pathname === "/api/inventory/refresh") {
 			await inventory.refreshInventory(ctx);
 			return json({ ok: true });
+		}
+
+		if (req.method === "POST" && url.pathname === "/api/connect") {
+			// Fire and forget: sign-in waits on a browser round-trip, and the
+			// panel already renders progress from the store.
+			inventory.connect(ctx).catch(() => {});
+			return json({ ok: true });
+		}
+
+		if (req.method === "POST" && url.pathname === "/api/inventory/investigate") {
+			const { agentId } = await readJson(req);
+			return json({ ok: requestInvestigation(ctx, String(agentId ?? "")) });
 		}
 
 		if (req.method === "POST" && url.pathname === "/api/inventory/sort") {

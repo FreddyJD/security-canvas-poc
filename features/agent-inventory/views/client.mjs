@@ -141,6 +141,27 @@ document.addEventListener("click", (e) => {
 
 	const breakdown = closest(e.target, "[data-breakdown]");
 	if (breakdown) return void post("/api/inventory/slice", { slice: breakdown.dataset.breakdown });
+
+	// Last, so a click on a control *inside* a row is handled by that control
+	// rather than being swallowed by the row it sits in.
+	const row = closest(e.target, "[data-agent-id]");
+	if (row) return void post("/api/inventory/investigate", { agentId: row.dataset.agentId });
+});
+
+/**
+ * Keyboard activation for table rows.
+ *
+ * The rows carry `tabindex` and `role="button"`, which promises Enter and Space
+ * work — a focusable thing that only responds to a mouse is worse than one that
+ * was never focusable. Space is prevented from scrolling the panel, as it would
+ * on a real button.
+ */
+document.addEventListener("keydown", (e) => {
+	if (e.key !== "Enter" && e.key !== " ") return;
+	const row = closest(e.target, "[data-agent-id]");
+	if (!row) return;
+	e.preventDefault();
+	void post("/api/inventory/investigate", { agentId: row.dataset.agentId });
 });
 
 /**

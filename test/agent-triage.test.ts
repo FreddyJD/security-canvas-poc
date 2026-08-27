@@ -1,7 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { CanvasStore } from "../features/risky-agents/usecases/store.mjs";
+import { describe, expect, it, vi } from "vitest";
 import * as triage from "../features/risky-agents/usecases/agent-triage.mjs";
 import { GraphError } from "../platform/graph.mjs";
+import { InventoryError } from "../platform/inventory-client.mjs";
 import type {
 	AgentRiskAssessment,
 	AgentRiskDetection,
@@ -9,22 +9,10 @@ import type {
 } from "../features/risky-agents/domain/types.js";
 
 /**
- * Use cases resolve auth and failure modes, so those modules are mocked at the
- * boundary. Everything below (scoring, ordering) stays real — the point is to
- * pin how failures become renderable state, not to re-test the domain.
+ * These use cases no longer own a canvas, so there is no store and no status
+ * machine to pin. What is left is the part a stateless MCP tool call depends
+ * on: the defaults applied to a query, and the shape of what comes back.
  */
-vi.mock("../platform/auth.mjs", () => ({
-	getToken: vi.fn(async () => "token"),
-	signIn: vi.fn(async () => "token"),
-	defaultTokenProvider: vi.fn(async () => "token"),
-}));
-vi.mock("../platform/config.mjs", async (importOriginal) => ({
-	...(await importOriginal<typeof import("../platform/config.mjs")>()),
-	getConfig: vi.fn(() => ({ clientId: "client", tenantId: "organizations", directToken: "" })),
-}));
-
-const { getToken, signIn } = await import("../platform/auth.mjs");
-const { getConfig } = await import("../platform/config.mjs");
 
 const assessment = (over: Partial<AgentRiskAssessment> = {}): AgentRiskAssessment =>
 	({
@@ -57,171 +45,55 @@ function stubRepository(assessments: AgentRiskAssessment[]) {
 }
 
 function ctx(assessments: AgentRiskAssessment[] = [assessment()]) {
-	return { store: new CanvasStore(), repository: stubRepository(assessments) };
+	return { repository: stubRepository(assessments) };
 }
 
-
-beforeEach(() => {
-	vi.mocked(getToken).mockResolvedValue("token");
-	vi.mocked(getConfig).mockReturnValue({ clientId: "client", tenantId: "organizations", directToken: "" });
-});
-
-describe("refreshQueue", () => {
-	it("loads the queue and selects the top agent", async () => {
-		const c = ctx([assessment({ agentId: "worst" }), assessment({ agentId: "other" })]);
-		await triage.refreshQueue(c);
-
-		expect(c.store.get().status).toBe("connected");
-		expect(c.store.get().selectedId).toBe("worst");
-		expect(c.store.get().lastRefresh).toBeTruthy();
-	});
-
-	it("keeps the analyst's selection across a refresh", async () => {
-		// Re-focusing the top of the list mid-investigation would yank the detail
-		// pane out from under whoever is reading it.
-		const c = ctx([assessment({ agentId: "a" }), assessment({ agentId: "b" })]);
-		await triage.refreshQueue(c);
-		c.store.navigate("agent-detail", { agentId: "b" });
-		await triage.refreshQueue(c);
-
-		expect(c.store.get().selectedId).toBe("b");
-	});
-
-	it("re-selects the top agent when the previous selection disappeared", async () => {
-		const c = ctx([assessment({ agentId: "gone" })]);
-		await triage.refreshQueue(c);
-		c.repository.listAssessments.mockResolvedValue([assessment({ agentId: "fresh" })]);
-		await triage.refreshQueue(c);
-
-		expect(c.store.get().selectedId).toBe("fresh");
-	});
-
-	it("reports needs-config when no client id is set", async () => {
-		vi.mocked(getConfig).mockReturnValue({ clientId: "", tenantId: "organizations", directToken: "" });
+describe("listRiskyAgents", () => {
+	it("defaults to the agents an analyst is actually triaging", async () => {
+		// Without these defaults the tool returns every scored agent including
+		// the dismissed and confirmed-safe ones, which is not a triage queue.
 		const c = ctx();
-		await triage.refreshQueue(c);
-		expect(c.store.get().status).toBe("needs-config");
+		await triage.listRiskyAgents(c);
+
+		expect(c.repository.listAssessments).toHaveBeenCalledWith({
+			riskLevels: ["high", "medium"],
+			riskStates: ["atRisk", "confirmedCompromised"],
+			includeDetections: false,
+			limit: 25,
+		});
 	});
 
-	it("reports needs-auth when there is no usable token", async () => {
-		vi.mocked(getToken).mockResolvedValue(null);
+	it("passes an explicit query through unchanged", async () => {
 		const c = ctx();
-		await triage.refreshQueue(c);
-		expect(c.store.get().status).toBe("needs-auth");
+		await triage.listRiskyAgents(c, { riskLevels: ["low"], limit: 5, includeDetections: true });
+
+		expect(c.repository.listAssessments).toHaveBeenCalledWith(
+			expect.objectContaining({ riskLevels: ["low"], limit: 5, includeDetections: true }),
+		);
 	});
 
-	it("treats an expired session as a sign-in prompt, not an error", async () => {
-		// A 401 is actionable by the analyst; an error screen is not.
-		const c = ctx();
-		c.repository.listAssessments.mockRejectedValue(new GraphError("token expired", 401));
-		await triage.refreshQueue(c);
-
-		expect(c.store.get().status).toBe("needs-auth");
-		expect(c.store.get().note).toMatch(/sign in again/i);
-	});
-
-	it("surfaces Graph remediation as an actionable hint", async () => {
-		const c = ctx();
-		c.repository.listAssessments.mockRejectedValue(new GraphError("Insufficient privileges.", 403));
-		await triage.refreshQueue(c);
-
-		expect(c.store.get().status).toBe("error");
-		expect(c.store.get().hint).toMatch(/Security Reader/);
-	});
-
-	it("says so explicitly when the tenant is clean", async () => {
-		const c = ctx([]);
-		await triage.refreshQueue(c);
-		expect(c.store.get().status).toBe("connected");
-		expect(c.store.get().note).toMatch(/No agents currently match/);
-	});
-
-	it("never invents agents on failure", async () => {
-		const c = ctx();
-		c.repository.listAssessments.mockRejectedValue(new Error("network down"));
-		await triage.refreshQueue(c);
-		expect(c.store.get().assessments).toEqual([]);
-	});
-});
-
-describe("connect", () => {
-	it("shows progress before the browser round-trip completes", async () => {
-		const c = ctx();
-		const seen: string[] = [];
-		c.store.subscribe((s) => seen.push(s.status));
-		await triage.connect(c);
-
-		expect(seen).toContain("signing-in");
-		expect(c.store.get().status).toBe("connected");
-	});
-
-	it("reports a failed sign-in instead of hanging on the spinner", async () => {
-		vi.mocked(signIn).mockRejectedValueOnce(new Error("State mismatch on sign-in callback."));
-		const c = ctx();
-		await triage.connect(c);
-
-		expect(c.store.get().status).toBe("error");
-		expect(c.store.get().note).toMatch(/State mismatch/);
-	});
-});
-
-describe("selectAgent", () => {
-	it("navigates to the detail route and records the selection", async () => {
-		const c = ctx([assessment({ agentId: "a" }), assessment({ agentId: "b" })]);
-		await triage.refreshQueue(c);
-		triage.selectAgent(c, "b");
-
-		expect(c.store.get().route).toEqual({ view: "agent-detail", params: { agentId: "b" } });
-		expect(c.store.get().selectedId).toBe("b");
-	});
-
-	it("throws on an unknown id rather than blanking the pane", async () => {
-		const c = ctx();
-		await triage.refreshQueue(c);
-		expect(() => triage.selectAgent(c, "nope")).toThrow(/No agent nope/);
-	});
-});
-
-describe("summarizeQueue", () => {
-	it("flattens factors to summaries and drops evidence", async () => {
-		// The model picking what to investigate needs reasons, not timestamps.
-		const c = ctx();
-		await triage.refreshQueue(c);
-		const summary = triage.summarizeQueue(c);
-
-		expect(summary.count).toBe(1);
-		expect(summary.agents[0]!.factors).toEqual(["Suspicious credential usage"]);
-		expect(JSON.stringify(summary)).not.toMatch(/weight/);
+	it("returns an empty queue rather than throwing on a clean tenant", async () => {
+		await expect(triage.listRiskyAgents(ctx([]))).resolves.toEqual([]);
 	});
 });
 
 describe("explainAgent", () => {
-	it("serves the queue's copy so the analyst and the model see one number", async () => {
-		const c = ctx([assessment({ agentId: "a", detectionDetail: [] })]);
-		await triage.refreshQueue(c);
-		const result = await triage.explainAgent(c, "a");
-
-		expect(result.agentId).toBe("a");
-		expect(c.repository.getAssessment).not.toHaveBeenCalled();
-	});
-
-	it("fetches an agent outside the current queue", async () => {
-		const c = ctx([assessment({ agentId: "a", detectionDetail: [] })]);
-		await triage.refreshQueue(c);
+	it("fetches the agent by id", async () => {
+		const c = ctx();
 		const result = await triage.explainAgent(c, "not-in-queue");
 
 		expect(result.agentId).toBe("not-in-queue");
-		expect(c.repository.getAssessment).toHaveBeenCalled();
+		expect(c.repository.getAssessment).toHaveBeenCalledWith("not-in-queue", {});
 	});
 
-	it("always refetches when the caller supplies exposure data", async () => {
-		// The cached assessment was scored without it, so reusing it would
-		// silently ignore the blast-radius the caller just provided.
-		const c = ctx([assessment({ agentId: "a", detectionDetail: [] })]);
-		await triage.refreshQueue(c);
+	it("forwards exposure data so the score reflects blast radius", async () => {
+		const c = ctx();
 		await triage.explainAgent(c, "a", { dataExposure: { highestLabel: "Confidential" } });
 
-		expect(c.repository.getAssessment).toHaveBeenCalled();
+		expect(c.repository.getAssessment).toHaveBeenCalledWith(
+			"a",
+			expect.objectContaining({ dataExposure: { highestLabel: "Confidential" } }),
+		);
 	});
 });
 
@@ -238,23 +110,38 @@ describe("recentActivity", () => {
 		expect(activity.count).toBe(3);
 		expect(activity.groups[0]).toEqual({ riskEventType: "signInSpike", count: 2 });
 	});
+
+	it("buckets a detection with no type rather than dropping it", async () => {
+		// A detection Graph could not classify still happened, and silently
+		// discarding it would undercount the window.
+		const c = ctx();
+		c.repository.listRecentDetections.mockResolvedValue([{ id: "1" }] as AgentRiskDetection[]);
+
+		const activity = await triage.recentActivity(c);
+		expect(activity.groups).toEqual([{ riskEventType: "unknown", count: 1 }]);
+	});
 });
 
 describe("updateRiskState", () => {
-	it("re-syncs the canvas so it cannot show a stale verdict", async () => {
+	it("applies the transition and reports what it did", async () => {
 		const c = ctx();
-		await triage.refreshQueue(c);
-		c.repository.listAssessments.mockClear();
-
-		await triage.updateRiskState(c, ["agent-1"], "confirmSafe");
+		const result = await triage.updateRiskState(c, ["agent-1"], "confirmSafe");
 
 		expect(c.repository.updateRiskState).toHaveBeenCalledWith(["agent-1"], "confirmSafe");
-		expect(c.repository.listAssessments).toHaveBeenCalled();
+		expect(result).toEqual({ action: "confirmSafe", agentIds: ["agent-1"], applied: true });
+	});
+});
+
+describe("isAuthFailure", () => {
+	it("singles out an expired session, which the analyst can fix", () => {
+		expect(triage.isAuthFailure(new GraphError("token expired", 401))).toBe(true);
 	});
 
-	it("works without a store, for the MCP host", async () => {
-		const c = ctx();
-		const result = await triage.updateRiskState({ repository: c.repository }, ["a"], "dismiss");
-		expect(result).toEqual({ action: "dismiss", agentIds: ["a"], applied: true });
+	it("does not treat a permissions problem as a sign-in prompt", () => {
+		// Re-authenticating as the same user cannot fix a 403, so offering
+		// sign-in would send the analyst round a loop that never resolves.
+		expect(triage.isAuthFailure(new GraphError("Insufficient privileges.", 403))).toBe(false);
+		expect(triage.isAuthFailure(new InventoryError("expired", 401))).toBe(false);
+		expect(triage.isAuthFailure(new Error("network down"))).toBe(false);
 	});
 });
