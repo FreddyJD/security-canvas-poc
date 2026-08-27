@@ -2,7 +2,7 @@
  * Styles for the playbook screen.
  *
  * Same token set as the Agents canvas, so the two panels are visibly one
- * product. Every value is a Fluent custom property; nothing is a literal.
+ * product. Every value is a **Lithium** custom property; nothing is a literal.
  */
 import { TONE_MARK, themeVariables } from "../../../platform/design-tokens.mjs";
 
@@ -24,7 +24,10 @@ body {
   font-size: var(--fontSizeBase300);
   line-height: var(--lineHeightBase300);
   color: var(--colorNeutralForeground1);
-  background: var(--colorNeutralBackground2);
+  /* Lithium's ground is a soft off-centre radial wash, not a flat fill — it is
+     what separates a Lithium surface from Fluent wearing Lithium's palette.
+     Composed from the theme's own gradient stops; see PAGE_BACKGROUND_PROPERTY. */
+  background: var(--canvas-page-background);
   height: 100vh;
   overflow: hidden;
 }
@@ -158,8 +161,12 @@ h2 {
   max-width: 60rem;
   background: color-mix(in srgb, var(--colorNeutralBackground2) 82%, transparent);
   backdrop-filter: blur(20px) saturate(180%);
-  /* A fade where content meets the bar, not a hard 1px rule. */
-  box-shadow: 0 -12px 16px -12px rgb(0 0 0 / 0.18);
+  /* A fade where content meets the bar, not a hard 1px rule. The geometry is
+     custom on purpose — this bar is pinned to the bottom, so the fade is cast
+     *upward* into the content, which no shadowN token does (they all throw
+     downward). Only the colour comes from the theme, so the fade deepens on the
+     dark ground instead of staying a fixed black wash that disappears on it. */
+  box-shadow: 0 -12px 16px -12px var(--colorNeutralShadowAmbient);
 }
 @media (prefers-reduced-transparency: reduce) {
   .action-bar { background: var(--colorNeutralBackground2); backdrop-filter: none; }
@@ -194,7 +201,7 @@ h2 {
 .segment.selected {
   color: var(--colorNeutralForeground1);
   background: var(--colorNeutralBackground1);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+  box-shadow: var(--shadow2);
 }
 .segment:focus-visible {
   outline: var(--strokeWidthThick) solid var(--colorBrandStroke1); outline-offset: 1px;
@@ -242,7 +249,7 @@ h2 {
 button.primary {
   padding: var(--spacingVerticalS) var(--spacingHorizontalXL);
   font: inherit; font-weight: var(--fontWeightSemibold);
-  color: #ffffff; background: var(--colorBrandBackground);
+  color: var(--colorNeutralForegroundOnBrand); background: var(--colorBrandBackground);
   border: none; border-radius: var(--borderRadiusMedium);
   cursor: pointer;
   transition: background var(--durationFaster) var(--curveEasyEase),
