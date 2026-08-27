@@ -73,6 +73,14 @@ export async function startPlaybookServer(ctx) {
 			return json({ ok: true });
 		}
 
+		if (req.method === "POST" && url.pathname === "/api/playbook/mode") {
+			const { mode } = await readJson(req);
+			const result = playbook.setMode(ctx, mode);
+			errors = result.ok ? [] : result.errors;
+			if (!result.ok) events.broadcast();
+			return json(result.ok ? { ok: true } : { ok: false, errors });
+		}
+
 		if (req.method === "POST" && url.pathname === "/api/playbook/done") {
 			const { stepId } = await readJson(req);
 			ctx.store.toggleDone(String(stepId));

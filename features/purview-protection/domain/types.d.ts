@@ -23,6 +23,21 @@
  */
 export type StepKind = "prerequisite" | "script" | "verify" | "note";
 
+/**
+ * How the operator wants the playbook carried out.
+ *
+ *   guided  the steps, one at a time, run by the human in their own session
+ *   auto    one composed script, run end to end by the agent in a terminal
+ *
+ * The difference is not presentation. Guided mode is eight commands the human
+ * pastes, each of which may be run in a session they already have; auto mode
+ * has to be a *single* script in a *single* session, because the sign-in that
+ * step 2 performs does not survive across separate PowerShell invocations. So
+ * the two modes need genuinely different artifacts, not the same steps with a
+ * different preamble.
+ */
+export type ExecutionMode = "guided" | "auto";
+
 /** A runnable block attached to a step. */
 export interface PlaybookScript {
 	/** Shell the block is written for. Drives the label and the copy hint. */
@@ -71,14 +86,27 @@ export interface Playbook {
 	/** One line: what this playbook accomplishes. */
 	summary: string;
 	/**
-	 * Why this is a script the operator runs rather than a button that acts.
-	 * Stated on screen, because "why can't you just do it" is the first
-	 * question a playbook like this provokes.
+	 * Why this is a script rather than a button that acts, stated per mode.
+	 *
+	 * Split because the honest answer differs: in guided mode it is "we will
+	 * not touch your tenant", and in auto mode that would be a lie — there the
+	 * answer is "we will, here is what stays yours". One shared paragraph would
+	 * have to be vague enough to cover both, which is the wrong thing to be
+	 * vague about.
 	 */
-	rationale: string[];
+	rationale: Record<ExecutionMode, string[]>;
 	params: PlaybookParam[];
 	/** Build the steps for a set of parameter values. */
 	buildSteps: (params: Record<string, string>) => PlaybookStep[];
+	/**
+	 * Build the whole playbook as one script, for auto mode.
+	 *
+	 * Not a concatenation of {@link buildSteps}. Run unattended the script has
+	 * to be idempotent and it has to stop on the one condition a human would
+	 * have caught by reading — a missing sensitive information type — so it is
+	 * written once, as its own artifact.
+	 */
+	buildScript: (params: Record<string, string>) => PlaybookScript;
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +146,8 @@ export interface PlaybookState {
 	note: string;
 	playbookId: string;
 	params: Record<string, string>;
+	/** Guided by default: the safe mode is the one you get without asking. */
+	mode: ExecutionMode;
 	progress: PlaybookProgress;
 	/** Null until the inventory has been read. */
 	coverage: DlpCoverage | null;

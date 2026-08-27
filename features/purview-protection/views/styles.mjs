@@ -135,6 +135,31 @@ h2 {
 }
 .param-help { font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground3); }
 
+/* ----- mode ------------------------------------------------------------ */
+.mode { display: grid; grid-template-columns: 1fr 1fr; gap: var(--spacingHorizontalS); max-width: 46rem; }
+.mode-option {
+  display: flex; flex-direction: column; gap: var(--spacingVerticalXXS);
+  padding: var(--spacingVerticalM) var(--spacingHorizontalM);
+  font: inherit; text-align: left; cursor: pointer;
+  background: var(--colorNeutralBackground1);
+  border: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+  border-radius: var(--borderRadiusXLarge);
+  color: inherit;
+  transition: border-color var(--durationFaster) var(--curveEasyEase),
+              background var(--durationFaster) var(--curveEasyEase);
+}
+.mode-option:hover { background: var(--colorSubtleBackgroundHover); }
+.mode-option.selected { border-color: var(--colorBrandStroke1); background: var(--colorBrandBackground2); }
+.mode-label { font-weight: var(--fontWeightSemibold); }
+.mode-hint { font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground3); }
+
+/* ----- auto ------------------------------------------------------------ */
+.auto { display: flex; flex-direction: column; gap: var(--spacingVerticalS); margin-bottom: var(--spacingVerticalL); }
+.auto-note { font-size: var(--fontSizeBase200); color: var(--colorNeutralForeground2); max-width: 46rem; }
+/* The auto script is long; cap it so the button below stays reachable
+   without scrolling past a screenful of PowerShell. */
+.auto pre { max-height: 22rem; overflow-y: auto; }
+
 /* ----- progress -------------------------------------------------------- */
 .progress { display: flex; align-items: center; gap: var(--spacingHorizontalM); margin-bottom: var(--spacingVerticalM); }
 .progress-track {
@@ -166,6 +191,12 @@ button.primary {
   transition: background var(--durationFaster) var(--curveEasyEase);
 }
 button.primary:hover { background: var(--colorBrandForegroundLinkHover); }
+
+/* The auto-mode button hands over something that will change the tenant with
+   nobody reading between the commands. It is the same button in the same
+   place, in the colour that says so. */
+button.primary.danger { background: var(--colorStatusDangerBackground3); }
+button.primary.danger:hover { background: var(--colorStatusDangerForeground1); }
 
 /* ----- steps ----------------------------------------------------------- */
 .steps { list-style: none; display: flex; flex-direction: column; gap: var(--spacingVerticalS); }

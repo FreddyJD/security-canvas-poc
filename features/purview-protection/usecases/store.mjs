@@ -25,6 +25,10 @@ function initialState(playbookId) {
 		note: "",
 		playbookId: playbook.id,
 		params,
+		// Guided by default. Auto mode runs tenant-changing commands without a
+		// human between them, so it is something you turn on, never something
+		// you find already on.
+		mode: "guided",
 		// The first step opens by default: a fully collapsed list gives the
 		// reader nothing to start from and hides that there is a script at all.
 		progress: { claimedDone: [], openStepId: playbook.buildSteps(params)[0]?.id ?? null },
@@ -75,6 +79,28 @@ export class PlaybookStore {
 			params: merged,
 			progress: { claimedDone: [], openStepId: steps[0]?.id ?? null },
 			note: "Parameters changed, so the scripts were rebuilt and progress was cleared.",
+		});
+	}
+
+	/**
+	 * Switch execution mode.
+	 *
+	 * Progress survives the switch, unlike a parameter change. The steps are
+	 * unchanged — only who runs them differs — so a ticked step still refers to
+	 * a command that still exists, and an operator who ran three steps by hand
+	 * before deciding to hand the rest over has not lied about anything.
+	 *
+	 * @param {import("../domain/types.js").ExecutionMode} mode
+	 */
+	setMode(mode) {
+		if (mode !== "guided" && mode !== "auto") return;
+		if (this.state.mode === mode) return;
+		this.set({
+			mode,
+			note:
+				mode === "auto"
+					? "Auto mode: Copilot runs the whole script in a terminal. You still sign in yourself when the browser prompt opens."
+					: "Guided mode: you run each command yourself, one step at a time.",
 		});
 	}
 
