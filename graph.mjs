@@ -30,14 +30,42 @@ const execFileAsync = promisify(execFile);
 const GRAPH = "https://graph.microsoft.com";
 const SCOPES = "https://graph.microsoft.com/IdentityRiskyAgent.Read.All offline_access";
 
-const CACHE_DIR = join(homedir(), ".copilot", "security-canvas");
-const CACHE_FILE = join(CACHE_DIR, "token-cache.json");
+const CONFIG_DIR = join(homedir(), ".copilot", "security-canvas");
+const CACHE_FILE = join(CONFIG_DIR, "token-cache.json");
+const CONFIG_FILE = join(CONFIG_DIR, "config.json");
+const CACHE_DIR = CONFIG_DIR;
 
-/** Config comes from the environment so no tenant identifiers are committed. */
+/**
+ * Configuration, resolved from disk first and environment second.
+ *
+ * Disk matters because the Copilot app launches extensions without the user's
+ * shell environment: variables exported in a terminal are simply not visible
+ * here. Requiring env vars would mean the canvas can never be configured from
+ * inside the app. The Azure DevOps plugin persists its connection the same way
+ * (~/.copilot/azure-devops-canvas/connection.json).
+ *
+ * Environment still wins for CI and scripted use.
+ */
+export function readConfigFile() {
+	try {
+		return JSON.parse(readFileSync(CONFIG_FILE, "utf8"));
+	} catch {
+		return {};
+	}
+}
+
+export function writeConfigFile(patch) {
+	const merged = { ...readConfigFile(), ...patch };
+	mkdirSync(CONFIG_DIR, { recursive: true });
+	writeFileSync(CONFIG_FILE, JSON.stringify(merged, null, 2), { mode: 0o600 });
+	return merged;
+}
+
 export function getConfig() {
+	const file = readConfigFile();
 	return {
-		tenantId: process.env.SECURITY_CANVAS_TENANT_ID || "organizations",
-		clientId: process.env.SECURITY_CANVAS_CLIENT_ID || "",
+		tenantId: process.env.SECURITY_CANVAS_TENANT_ID || file.tenantId || "organizations",
+		clientId: process.env.SECURITY_CANVAS_CLIENT_ID || file.clientId || "",
 		directToken: process.env.SECURITY_CANVAS_TOKEN || "",
 	};
 }
@@ -216,7 +244,7 @@ export async function loadTenantData({ limit = 25 } = {}) {
 	if (!clientId) {
 		return {
 			status: "needs-config",
-			note: "Set SECURITY_CANVAS_CLIENT_ID to an app registration that declares IdentityRiskyAgent.Read.All.",
+			note: "",
 			agents: [],
 			detections: {},
 		};

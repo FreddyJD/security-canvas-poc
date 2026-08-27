@@ -70,16 +70,25 @@ is worse than one that shows nothing: an analyst who mistakes placeholder rows f
 exactly the wrong conclusion, and the failure is silent. Every non-connected state instead names the
 problem — missing configuration, expired session, insufficient permission, or missing licensing.
 
-Connect needs an app registration. **The Azure CLI cannot be used** — it is a first-party app
-pre-authorized for a fixed set of Graph scopes, and `IdentityRiskyAgent.Read.All` is not among them,
-so an `az` token returns 403 no matter how privileged the signed-in user is (`AADSTS65002`).
+Setup is three steps, all inside the canvas:
 
-One-time setup, by a Global Administrator:
+1. Open Security Canvas. It asks for an **Application (client) ID**.
+2. Paste one and click **Save and sign in**.
+3. Complete the device-code prompt. The queue loads automatically.
+
+Configuration persists to `~/.copilot/security-canvas/config.json` and tokens to
+`token-cache.json` beside it, both mode `0600`. Sign-in is a one-time step per device.
+
+**The Azure CLI cannot be used.** It is a first-party app pre-authorized for a fixed set of Graph
+scopes, and `IdentityRiskyAgent.Read.All` is not among them, so an `az` token returns 403 no matter
+how privileged the signed-in user is (`AADSTS65002`). A dedicated app registration is required.
+
+If your tenant does not have one yet, a Global Administrator runs:
 
 ```bash
 # 1. Register a public client app
-az ad app create --display-name "Security Canvas" \
-  --is-fallback-public-client true \
+az ad app create --display-name "Security Canvas" \\
+  --is-fallback-public-client true \\
   --required-resource-accesses '[{
     "resourceAppId": "00000003-0000-0000-c000-000000000000",
     "resourceAccess": [
@@ -92,21 +101,20 @@ az ad app create --display-name "Security Canvas" \
 az ad app permission admin-consent --id <appId>
 ```
 
-Then point the canvas at it:
+Hand the resulting **Application (client) ID** to whoever uses the canvas. Everything else happens
+in the UI.
 
-```bash
-export SECURITY_CANVAS_CLIENT_ID=<appId>
-export SECURITY_CANVAS_TENANT_ID=<tenantId>   # optional; defaults to "organizations"
-```
+Environment variables still override the config file, which is useful for CI:
 
 | Variable | Purpose |
 |---|---|
-| `SECURITY_CANVAS_CLIENT_ID` | App registration used for device-code sign-in. Required for live data. |
-| `SECURITY_CANVAS_TENANT_ID` | Tenant to sign in against. Optional. |
-| `SECURITY_CANVAS_TOKEN` | A Graph access token, used as-is. Useful in CI. |
+| `SECURITY_CANVAS_CLIENT_ID` | App registration used for device-code sign-in. |
+| `SECURITY_CANVAS_TENANT_ID` | Tenant to sign in against. Defaults to `organizations`. |
+| `SECURITY_CANVAS_TOKEN` | A Graph access token, used as-is. |
 
-Tokens cache at `~/.copilot/security-canvas/token-cache.json` (mode `0600`) and refresh silently, so
-sign-in is a one-time step per device.
+> Configuration is read from disk first because the Copilot app launches extensions **without your
+> shell environment** — variables exported in a terminal are invisible to the canvas. Requiring them
+> would make the canvas impossible to configure from inside the app.
 
 **Requirements:** `IdentityRiskyAgent.Read.All` with admin consent; a Security Reader, Security
 Operator, or Security Administrator role; and Microsoft Agent 365 licensing. Missing any of the three

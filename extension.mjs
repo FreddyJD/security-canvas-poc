@@ -2,7 +2,7 @@ import http from "node:http";
 import { createCanvas, joinSession } from "@github/copilot-sdk/extension";
 import { assessAgent } from "./vendor/correlate.mjs";
 import { describeDetection } from "./vendor/risk-catalog.mjs";
-import { loadTenantData, beginDeviceCode, getConfig } from "./graph.mjs";
+import { loadTenantData, beginDeviceCode, getConfig, writeConfigFile } from "./graph.mjs";
 
 /**
  * Security Canvas — a triage queue for risky Entra agent identities.
@@ -134,6 +134,32 @@ const server = http.createServer(async (req, res) => {
 	}
 
 	if (req.method === "POST" && req.url === "/refresh") {
+		await refresh();
+		return json({ ok: true });
+	}
+
+	// Persist the app registration so the user never needs shell env vars.
+	if (req.method === "POST" && req.url === "/configure") {
+		const { clientId, tenantId } = await readJson(req);
+		const id = String(clientId || "").trim();
+		// Fail fast on a malformed GUID rather than surfacing an opaque AADSTS900023.
+		if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+			state.status = "needs-config";
+			state.note = "That does not look like an application (client) ID.";
+			state.hint = "Copy the Application (client) ID from the app registration overview in the Entra portal.";
+			broadcast();
+			return json({ ok: false });
+		}
+		try {
+			writeConfigFile({ clientId: id, tenantId: String(tenantId || "").trim() || "organizations" });
+		} catch (e) {
+			state.status = "error";
+			state.note = `Could not save configuration: ${e.message}`;
+			broadcast();
+			return json({ ok: false });
+		}
+		state.note = "Configuration saved.";
+		state.hint = "";
 		await refresh();
 		return json({ ok: true });
 	}
@@ -428,6 +454,12 @@ function html() {
   .gate code{font-family:ui-monospace,SFMono-Regular,monospace;font-size:11.5px;
              background:var(--panel);padding:2px 6px;border-radius:4px;color:var(--fg)}
   .gate button{padding:8px 20px;font-size:13px;margin-top:4px}
+  .form{display:flex;flex-direction:column;gap:8px;width:100%;max-width:340px;margin-top:6px}
+  .form input{background:var(--panel);border:1px solid var(--border);border-radius:6px;
+              padding:8px 11px;color:var(--fg);font:inherit;font-size:12.5px;
+              font-family:ui-monospace,SFMono-Regular,monospace}
+  .form input:focus{outline:none;border-color:var(--info)}
+  .form input::placeholder{font-family:ui-sans-serif,system-ui,sans-serif;color:var(--dim)}
   .code{font-family:ui-monospace,SFMono-Regular,monospace;font-size:30px;font-weight:600;
         letter-spacing:.16em;color:var(--info);background:var(--panel);
         border:1px solid var(--border);padding:14px 26px;border-radius:10px;
@@ -525,11 +557,19 @@ function html() {
 
     if (s.status === 'needs-config')
       return shield +
-        '<h2>Configuration required</h2>' +
-        '<p>Set <code>SECURITY_CANVAS_CLIENT_ID</code> to an app registration that declares ' +
-        '<code>IdentityRiskyAgent.Read.All</code>, then reopen this canvas.</p>' +
-        '<p class="hint">The Azure CLI cannot be used: it is pre-authorized for a fixed set of Graph ' +
-        'scopes that excludes agent risk. See the README for the four-command setup.</p>';
+        '<h2>Connect your tenant</h2>' +
+        '<p>Security Canvas signs in with an Entra app registration that declares ' +
+        '<code>IdentityRiskyAgent.Read.All</code>. Paste its Application (client) ID below.</p>' +
+        '<div class="form">' +
+          '<input id="cid" placeholder="Application (client) ID" spellcheck="false" autocomplete="off"/>' +
+          '<input id="tid" placeholder="Directory (tenant) ID — optional" spellcheck="false" autocomplete="off"/>' +
+          '<button class="primary" id="save-btn">Save and sign in</button>' +
+        '</div>' +
+        (s.note ? '<p class="err">' + esc(s.note) + '</p>' : '') +
+        (s.hint ? '<p class="hint">' + esc(s.hint) + '</p>' : '') +
+        '<p class="hint" style="margin-top:2px">No app registration yet? The README has a four-command setup. ' +
+        'The Azure CLI cannot be used \u2014 it is pre-authorized for a fixed set of Graph scopes ' +
+        'that excludes agent risk.</p>';
 
     if (s.status === 'error')
       return shield +
@@ -551,6 +591,16 @@ function html() {
   function wireGate() {
     const b = document.getElementById('gate-btn');
     if (b) b.onclick = () => post('/connect');
+
+    const save = document.getElementById('save-btn');
+    if (save) {
+      const cid = document.getElementById('cid');
+      const tid = document.getElementById('tid');
+      const submit = () => post('/configure', { clientId: cid.value, tenantId: tid.value });
+      save.onclick = submit;
+      for (const el of [cid, tid]) el.onkeydown = e => { if (e.key === 'Enter') submit(); };
+      cid.focus();
+    }
   }
 
   function renderDetail(a) {
