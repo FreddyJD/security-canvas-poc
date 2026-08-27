@@ -6,24 +6,23 @@
   "description": "Cross-pillar agent security triage for Microsoft Entra, Purview, Defender and GitHub — exposed as MCP tools.",
   "license": "MIT",
   "bin": {
-    "security-canvas": "./dist/index.js"
+    "security-canvas": "./mcp.mjs"
   },
   "files": [
-    "dist"
+    "extension.mjs",
+    "mcp.mjs",
+    "features",
+    "platform"
   ],
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
-    "start": "node dist/index.js",
+    "start": "node mcp.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
-    "test:e2e": "npm run build && node test/e2e-smoke.mjs",
-    "build:canvas": "tsc && node scripts/build-canvas-vendor.mjs"
+    "inspect": "npx @modelcontextprotocol/inspector node mcp.mjs",
+    "test:e2e": "node test/e2e-smoke.mjs"
   },
   "dependencies": {
-    "@azure/identity": "^4.13.2",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^4.4.3"
   },

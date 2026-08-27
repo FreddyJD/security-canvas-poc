@@ -1,16 +1,19 @@
 /**
- * End-to-end smoke test: drives the built server over real stdio JSON-RPC,
- * exactly as an MCP host would, using an in-memory Graph stub.
+ * End-to-end smoke test: drives the real server over JSON-RPC, exactly as an
+ * MCP host would, with an in-memory Graph stub swapped in at the lowest layer.
  *
  * Unit tests prove the scoring math; this proves the wire protocol, the tool
- * registration, and the rendered output an analyst actually sees.
+ * registration, and the rendered output an analyst actually sees. Because the
+ * stub is injected at the GraphClient boundary, every layer above it —
+ * repository, use cases, tools — is the production code path.
  *
  * Run: node test/e2e-smoke.mjs
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { registerTools } from "../dist/tools.js";
+import { AgentRepository } from "../features/risky-agents/data/agent-repository.mjs";
+import { registerTools } from "../features/risky-agents/tools/mcp-tools.mjs";
 
 // --- Fake tenant -----------------------------------------------------------
 const AGENTS = [
@@ -68,6 +71,7 @@ const graphStub = {
 	},
 	listDetectionsForAgent: async (id) => DETECTIONS[id] ?? [],
 	listRecentDetections: async () => Object.values(DETECTIONS).flat(),
+	listAllDetections: async () => Object.values(DETECTIONS).flat(),
 	dismissAgentRisk: async () => {},
 	confirmAgentCompromised: async () => {},
 	confirmAgentSafe: async () => {},
@@ -85,7 +89,7 @@ const check = (label, cond, detail = "") => {
 };
 
 const server = new McpServer({ name: "security-canvas", version: "0.1.0" });
-registerTools(server, graphStub);
+registerTools(server, new AgentRepository(graphStub));
 
 const client = new Client({ name: "smoke", version: "1.0.0" });
 const [clientT, serverT] = InMemoryTransport.createLinkedPair();

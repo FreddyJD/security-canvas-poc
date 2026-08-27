@@ -1,22 +1,33 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2023"],
-    "module": "Node16",
-    "moduleResolution": "Node16",
-    "rootDir": "src",
-    "outDir": "dist",
+    "lib": ["ES2023", "DOM"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
+    // The runtime is plain ESM — a Copilot plugin install is a file copy, so
+    // there is no build step to run. TypeScript is used purely as a checker
+    // over JSDoc annotations, which is why `checkJs` is on and `noEmit` is
+    // non-negotiable.
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "exactOptionalPropertyTypes": false,
-    "declaration": true,
-    "sourceMap": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
+    "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": false
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+  "include": ["features/**/*", "platform/**/*", "test/**/*", "types/**/*", "extension.mjs", "mcp.mjs"],
+
+  // The e2e smoke script is an executable harness, not shipped source: it
+  // deliberately traffics in the loosely-typed JSON that crosses the MCP wire,
+  // and annotating every protocol response would obscure what it asserts.
+  // It is exercised by `npm run test:e2e`, which is where it earns its keep.
+  "exclude": ["node_modules", "test/e2e-smoke.mjs"]
 }

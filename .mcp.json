@@ -2,11 +2,7 @@
   "mcpServers": {
     "security-canvas": {
       "command": "node",
-      "args": ["./dist/index.js"],
-      "env": {
-        "AZURE_TENANT_ID": "${AZURE_TENANT_ID}",
-        "AZURE_CLIENT_ID": "${AZURE_CLIENT_ID}"
-      }
+      "args": ["./mcp.mjs"]
     }
   }
 }
