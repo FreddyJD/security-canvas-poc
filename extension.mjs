@@ -4,16 +4,17 @@
  * Composition root and nothing else: build the dependencies, declare the
  * canvases, wire the actions. Every behaviour lives under features/.
  *
- * Three canvases, one estate:
+ * Four canvases, one estate:
  *   Agents          the whole inventory across every Microsoft agent plane
+ *   Agent details   one agent in depth: identity, score, access, and a graph
  *   Security Canvas the Entra identity-risk triage queue over the same agents
  *   Protect agents  a playbook that hands the operator the exact PowerShell
  *                   Purview requires, because it has no API for agent scoping
  *
  * They are separate surfaces rather than tabs because they answer different
  * questions and the model routes to them by name — "what are my agents?",
- * "what needs triage?" and "protect my sensitive data" should not land on the
- * same screen.
+ * "tell me about this one", "what needs triage?" and "protect my sensitive
+ * data" should not land on the same screen.
  *
  * Must stay at the repository root: a whole-repo plugin install lands the
  * entrypoint at ~/.copilot/extensions/<name>/extension.mjs, exactly one level
@@ -40,6 +41,11 @@ import { createInventoryActions } from "./features/agent-inventory/tools/canvas-
 import * as inventory from "./features/agent-inventory/usecases/inventory-browse.mjs";
 import { startInventoryServer } from "./features/agent-inventory/views/inventory-server.mjs";
 
+import { AgentDetailsRepository } from "./features/agent-details/data/agent-details-repository.mjs";
+import { DetailsStore } from "./features/agent-details/usecases/store.mjs";
+import { createDetailsActions } from "./features/agent-details/tools/canvas-actions.mjs";
+import { startDetailsServer } from "./features/agent-details/views/details-server.mjs";
+
 /** @type {import("@github/copilot-sdk/extension").Session | undefined} */
 let session;
 
@@ -50,12 +56,23 @@ const getSession = () => session;
 const triageCtx = { store: new CanvasStore(), repository: new AgentRepository(), getSession };
 const inventoryCtx = { store: new InventoryStore(), repository: new InventoryRepository(), getSession };
 
+// The details page resolves its catalog row through the inventory repository
+// the Agents panel already holds, so clicking a row opens this page without
+// re-reading a catalog that is in memory — and the two surfaces cannot show
+// different facts about the same agent.
+const detailsCtx = {
+	store: new DetailsStore(),
+	repository: new AgentDetailsRepository(undefined, inventoryCtx.repository),
+	getSession,
+};
+
 // The playbook reads DLP coverage from the same inventory the Agents panel
 // shows, so it shares that repository rather than opening its own client.
 const playbookCtx = { store: new PlaybookStore(), repository: inventoryCtx.repository, getSession };
 
 const triagePanel = await startCanvasServer(triageCtx);
 const inventoryPanel = await startInventoryServer(inventoryCtx);
+const detailsPanel = await startDetailsServer(detailsCtx);
 const playbookPanel = await startPlaybookServer(playbookCtx);
 
 const agentsCanvas = createCanvas({
@@ -83,6 +100,30 @@ const agentsCanvas = createCanvas({
 	},
 
 	onClose: async () => inventoryPanel.close(),
+});
+
+const detailsCanvas = createCanvas({
+	id: "agent-details",
+	displayName: "Agent details",
+	description:
+		"One agent in depth: who owns it, what identity it runs as, its unified secure score and the goals it " +
+		"fails, its Conditional Access / Defender / Purview DLP posture, and a pan-and-zoom graph of everything " +
+		"it can reach.",
+
+	actions: createDetailsActions(detailsCtx),
+
+	open: async () => {
+		const state = detailsCtx.store.get();
+		return {
+			url: `http://127.0.0.1:${detailsPanel.port}`,
+			title: "Agent details",
+			// The panel opens empty until an agent is chosen, and says so rather
+			// than showing a spinner for an arrival that is not coming.
+			status: state.vm ? state.vm.name : "pick an agent",
+		};
+	},
+
+	onClose: async () => detailsPanel.close(),
 });
 
 const securityCanvas = createCanvas({
@@ -132,7 +173,7 @@ const protectCanvas = createCanvas({
 	onClose: async () => playbookPanel.close(),
 });
 
-session = await joinSession({ canvases: [agentsCanvas, securityCanvas, protectCanvas] });
+session = await joinSession({ canvases: [agentsCanvas, detailsCanvas, securityCanvas, protectCanvas] });
 
 // Warm in the background so the first open of any panel is instant.
 inventory.refreshInventory(inventoryCtx).catch(() => {});

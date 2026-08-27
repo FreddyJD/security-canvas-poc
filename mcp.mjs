@@ -17,6 +17,8 @@ import { AgentRepository } from "./features/risky-agents/data/agent-repository.m
 import { registerTools } from "./features/risky-agents/tools/mcp-tools.mjs";
 import { InventoryRepository } from "./features/agent-inventory/data/inventory-repository.mjs";
 import { registerInventoryTools } from "./features/agent-inventory/tools/mcp-tools.mjs";
+import { AgentDetailsRepository } from "./features/agent-details/data/agent-details-repository.mjs";
+import { registerDetailsTools } from "./features/agent-details/tools/mcp-tools.mjs";
 import { PlaybookStore } from "./features/purview-protection/usecases/store.mjs";
 import { registerPlaybookTools } from "./features/purview-protection/tools/playbook-tools.mjs";
 
@@ -28,6 +30,10 @@ async function main() {
 				"Agent inventory and cross-pillar security triage for a Microsoft tenant.\n\n" +
 				"For 'what are my agents?' start with list_agents — the whole estate across Microsoft 365 Copilot, " +
 				"Copilot Studio, Endpoint and other platforms — or get_agent_estate_summary for totals only.\n\n" +
+				"For 'tell me more about agent X' call get_agent_details with the agent id: it returns that one " +
+				"agent's identity facts, its secure score and the goals it fails, its Conditional Access / Defender / " +
+				"Purview DLP posture, and the resources it can reach. It distinguishes a control that was evaluated " +
+				"and failed from one that was never evaluated — never report the second as a security gap.\n\n" +
 				"For security triage start with list_risky_agents to find flagged Entra agent identities, then " +
 				"explain_agent_risk for a single agent's detection history, and assess_agent_blast_radius to weigh " +
 				"identity risk against data and code exposure.\n\n" +
@@ -39,12 +45,17 @@ async function main() {
 		},
 	);
 
-	// One inventory repository, shared: the playbook's coverage numbers and the
-	// Agents tools must describe the same estate.
+	// One inventory repository, shared: the playbook's coverage numbers, the
+	// Agents tools and the details page must describe the same estate.
 	const inventoryRepository = new InventoryRepository();
 
 	registerTools(server, new AgentRepository());
 	registerInventoryTools(server, inventoryRepository);
+	// The details repository reads its catalog row through the shared inventory
+	// repository, so `list_agents` and `get_agent_details` cannot disagree about
+	// the same agent — and asking about one agent does not re-download a catalog
+	// the process already holds.
+	registerDetailsTools(server, { repository: new AgentDetailsRepository(undefined, inventoryRepository) });
 	registerPlaybookTools(server, { store: new PlaybookStore(), repository: inventoryRepository });
 
 	await server.connect(new StdioServerTransport());

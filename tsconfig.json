@@ -25,9 +25,9 @@
   },
   "include": ["features/**/*", "platform/**/*", "test/**/*", "types/**/*", "extension.mjs", "mcp.mjs"],
 
-  // The e2e smoke script is an executable harness, not shipped source: it
-  // deliberately traffics in the loosely-typed JSON that crosses the MCP wire,
-  // and annotating every protocol response would obscure what it asserts.
-  // It is exercised by `npm run test:e2e`, which is where it earns its keep.
-  "exclude": ["node_modules", "test/e2e-smoke.mjs"]
+  // The e2e smoke script and the preview harness are executables, not shipped
+  // source: both deliberately traffic in the loosely-typed JSON that crosses a
+  // wire, and annotating every protocol response would obscure what they do.
+  // `test:e2e` and `test:preview` are where they earn their keep.
+  "exclude": ["node_modules", "test/e2e-smoke.mjs", "test/details-preview.mjs"]
 }

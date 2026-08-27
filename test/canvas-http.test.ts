@@ -15,6 +15,12 @@ describe("isBrowserModule", () => {
 		expect(isBrowserModule("features/agent-inventory/components/agent-table.mjs")).toBe(true);
 		expect(isBrowserModule("features/agent-inventory/domain/presentation.mjs")).toBe(true);
 		expect(isBrowserModule("features/risky-agents/components/primitives.mjs")).toBe(true);
+		// The details map runs in the browser: its camera and layout are domain,
+		// its paint and gesture engine are components.
+		expect(isBrowserModule("features/agent-details/domain/map-camera.mjs")).toBe(true);
+		expect(isBrowserModule("features/agent-details/domain/map-layout.mjs")).toBe(true);
+		expect(isBrowserModule("features/agent-details/components/access-graph.mjs")).toBe(true);
+		expect(isBrowserModule("features/agent-details/views/client.mjs")).toBe(true);
 	});
 
 	it("refuses a feature's data and use-case layers", () => {
@@ -22,6 +28,9 @@ describe("isBrowserModule", () => {
 		expect(isBrowserModule("features/agent-inventory/data/inventory-repository.mjs")).toBe(false);
 		expect(isBrowserModule("features/risky-agents/usecases/agent-triage.mjs")).toBe(false);
 		expect(isBrowserModule("features/risky-agents/tools/mcp-tools.mjs")).toBe(false);
+		expect(isBrowserModule("features/agent-details/data/agent-details-repository.mjs")).toBe(false);
+		expect(isBrowserModule("features/agent-details/usecases/agent-details.mjs")).toBe(false);
+		expect(isBrowserModule("features/agent-details/tools/mcp-tools.mjs")).toBe(false);
 	});
 
 	it("serves only the platform modules built for a browser", () => {

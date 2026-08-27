@@ -20,7 +20,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "inspect": "npx @modelcontextprotocol/inspector node mcp.mjs",
-    "test:e2e": "node test/e2e-smoke.mjs"
+    "test:e2e": "node test/e2e-smoke.mjs",
+    "preview:details": "node test/details-preview.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
