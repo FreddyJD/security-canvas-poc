@@ -14,7 +14,7 @@ import { PlaybookStore } from "../features/purview-protection/usecases/store.mjs
 import * as playbook from "../features/purview-protection/usecases/run-playbook.mjs";
 import {
 	autoPanel,
-	modeToggle,
+	panelTabs,
 	scriptBlock,
 	stepCard,
 	progressBar,
@@ -423,11 +423,14 @@ describe("PlaybookStore", () => {
 		expect(new PlaybookStore().get().mode).toBe("guided");
 	});
 
-	it("switches mode and says what changed", () => {
+	it("switches mode without a banner repeating what the UI already shows", () => {
+		// The selected segment and the hint above the commit button both state
+		// the active mode; a third copy at the top of the document only moved
+		// the layout under the reader.
 		const store = new PlaybookStore();
 		store.setMode("auto");
 		expect(store.get().mode).toBe("auto");
-		expect(store.get().note).toMatch(/Copilot runs the whole script/);
+		expect(store.get().note).toBe("");
 	});
 
 	it("keeps progress across a mode switch", () => {
@@ -443,6 +446,42 @@ describe("PlaybookStore", () => {
 		const store = new PlaybookStore();
 		store.setMode("yolo" as never);
 		expect(store.get().mode).toBe("guided");
+	});
+
+	it("opens on the work rather than on the settings form", () => {
+		expect(new PlaybookStore().get().panel).toBe("guided");
+	});
+
+	it("shows a mode when something selects it", () => {
+		// Switching to auto and leaving the operator on the settings form
+		// would change what the handoff does with nothing on screen saying so.
+		const store = new PlaybookStore();
+		store.setPanel("configure");
+		store.setMode("auto");
+		expect(store.get().panel).toBe("auto");
+	});
+
+	it("leaves the mode alone when showing the configure pane", () => {
+		const store = new PlaybookStore();
+		store.setMode("auto");
+		store.setPanel("configure");
+		expect(store.get().panel).toBe("configure");
+		expect(store.get().mode).toBe("auto");
+	});
+
+	it("returns from configure to the mode already selected", () => {
+		// Without this the tab for the current mode is inert and the operator
+		// is stuck on the form.
+		const store = new PlaybookStore();
+		store.setPanel("configure");
+		store.setPanel("guided");
+		expect(store.get().panel).toBe("guided");
+	});
+
+	it("ignores a pane it does not recognise", () => {
+		const store = new PlaybookStore();
+		store.setPanel("settings" as never);
+		expect(store.get().panel).toBe("guided");
 	});
 });
 
@@ -502,6 +541,26 @@ describe("applyParams", () => {
 	});
 });
 
+describe("playbookViewModel", () => {
+	it("reports untouched parameters, so the hidden pane can say so", () => {
+		// ProjectArgus is a placeholder SIT. An operator who hands off without
+		// changing it built a policy against a name their tenant may not have,
+		// and the form is now one click away rather than in their face.
+		const c = ctx();
+		expect(playbook.playbookViewModel(c).paramsAreDefault).toBe(true);
+
+		playbook.applyParams(c, { sitName: "ContosoPII" });
+		expect(playbook.playbookViewModel(c).paramsAreDefault).toBe(false);
+	});
+
+	it("reports the pane, so the view does not have to infer it from the mode", () => {
+		const c = ctx();
+		playbook.setPanel(c, "configure");
+		expect(playbook.playbookViewModel(c).panel).toBe("configure");
+		expect(playbook.playbookViewModel(c).mode).toBe("guided");
+	});
+});
+
 describe("buildHandoff", () => {
 	it("carries every step and its script", () => {
 		const handoff = playbook.buildHandoff(ctx());
@@ -554,6 +613,28 @@ describe("setMode", () => {
 	it("applies a valid mode", () => {
 		const c = ctx();
 		expect(playbook.setMode(c, "auto").ok).toBe(true);
+		expect(c.store.get().mode).toBe("auto");
+	});
+});
+
+describe("setPanel", () => {
+	it("rejects a pane outside the three", () => {
+		const c = ctx();
+		const result = playbook.setPanel(c, "settings");
+		expect(result.ok).toBe(false);
+		expect(c.store.get().panel).toBe("guided");
+	});
+
+	it("shows the configure pane without changing the mode", () => {
+		const c = ctx();
+		expect(playbook.setPanel(c, "configure").ok).toBe(true);
+		expect(c.store.get().panel).toBe("configure");
+		expect(c.store.get().mode).toBe("guided");
+	});
+
+	it("selecting a run pane selects that mode too", () => {
+		const c = ctx();
+		expect(playbook.setPanel(c, "auto").ok).toBe(true);
 		expect(c.store.get().mode).toBe("auto");
 	});
 });
@@ -686,21 +767,26 @@ describe("progressBar", () => {
 	});
 });
 
-describe("modeToggle", () => {
-	it("marks the selected mode for assistive tech, not only visually", () => {
-		const html = modeToggle("auto");
-		expect(html).toMatch(/data-mode="auto"[^>]*aria-checked="true"/s);
-		expect(html).toMatch(/data-mode="guided"[^>]*aria-checked="false"/s);
+describe("panelTabs", () => {
+	it("marks the selected pane for assistive tech, not only visually", () => {
+		const html = panelTabs("auto");
+		expect(html).toMatch(/data-panel="auto"[^>]*aria-selected="true"/s);
+		expect(html).toMatch(/data-panel="guided"[^>]*aria-selected="false"/s);
 	});
 
 	it("names both modes as choices rather than as on and off", () => {
-		const html = modeToggle("guided");
+		const html = panelTabs("guided");
 		expect(html).toContain("Walk me through it");
 		expect(html).toContain("Just run it");
 	});
 
-	it("says the operator still signs in, on the mode that acts", () => {
-		expect(modeToggle("guided")).toMatch(/You still sign in/);
+	it("offers configure as a peer of the two run modes", () => {
+		expect(panelTabs("guided")).toContain("Configure policy");
+	});
+
+	it("flags untouched parameters, since the pane is easy to never open", () => {
+		expect(panelTabs("guided", true)).toContain("tab-dot");
+		expect(panelTabs("guided", false)).not.toContain("tab-dot");
 	});
 });
 
@@ -737,6 +823,8 @@ describe("renderPlaybook", () => {
 		coverage: null,
 		coverageSummary: "unknown",
 		recommended: true,
+		panel: "guided" as const,
+		paramsAreDefault: true,
 		autoScript: PROTECT_AGENTS_PLAYBOOK.buildScript({
 			policyName: "AIAgentPolicy",
 			sitName: "ProjectArgus",
@@ -747,15 +835,83 @@ describe("renderPlaybook", () => {
 	it("shows the steps in guided mode", () => {
 		const html = renderPlaybook({ ...base, mode: "guided" } as never);
 		expect(html).toContain("steps marked done");
-		expect(html).toContain("Walk me through this in chat");
+		expect(html).toContain("Walk me through it in chat");
 	});
 
 	it("replaces the steps with the script in auto mode", () => {
 		// Leaving the step list up next to "Copilot runs this" would invite
 		// ticking steps nobody is running, and the progress bar would measure
 		// something that no longer happens.
-		const html = renderPlaybook({ ...base, mode: "auto" } as never);
+		const html = renderPlaybook({ ...base, mode: "auto", panel: "auto" } as never);
 		expect(html).toContain("Run it in chat");
 		expect(html).not.toContain("steps marked done");
+	});
+
+	it("keeps the settings form off the run panes", () => {
+		// The reason this changed at all: three text inputs with working
+		// defaults were sitting between the operator and the playbook on
+		// every visit.
+		const html = renderPlaybook({ ...base, mode: "guided" } as never);
+		expect(html).not.toContain("param-grid");
+	});
+
+	it("shows the form when the configure pane is selected", () => {
+		const html = renderPlaybook({ ...base, panel: "configure" } as never);
+		expect(html).toContain("param-grid");
+		expect(html).not.toContain("steps marked done");
+	});
+
+	it("still states the values on the pane that hides the form", () => {
+		// Hiding the form must not hide what is about to run. An operator
+		// should not have to read PowerShell to see which SIT they are
+		// enforcing on.
+		const html = renderPlaybook({
+			...base,
+			mode: "guided",
+			params: [{ id: "sitName", label: "Sensitive information type", help: "", value: "ProjectArgus" }],
+		} as never);
+		expect(html).toContain("ProjectArgus");
+		expect(html).toContain('data-panel="configure"');
+	});
+
+	it("puts the choice and the commit in one bar, below the document", () => {
+		// The old layout separated picking a mode from acting on it by a
+		// screenful of PowerShell.
+		const html = renderPlaybook({ ...base, mode: "guided" } as never);
+		const bar = html.indexOf("action-bar");
+		expect(bar).toBeGreaterThan(-1);
+		expect(bar).toBeGreaterThan(html.indexOf('class="doc"'));
+		expect(html.indexOf("segmented")).toBeGreaterThan(bar);
+	});
+
+	it("keeps the bar to the control and the button, with no prose between", () => {
+		// The bar holds two things. A sentence restating what the selected
+		// segment and the button already say made it an uneven two-row block.
+		const html = renderPlaybook({ ...base, mode: "guided" } as never);
+		const bar = html.slice(html.indexOf("action-bar"));
+		expect(bar).not.toMatch(/<p[\s>]/);
+	});
+
+	it("offers exactly one button that acts", () => {
+		// Two competing commit targets is how an operator ends up pressing the
+		// one that rewrites tenant policy by accident.
+		for (const pane of ["guided", "auto", "configure"] as const) {
+			const html = renderPlaybook({ ...base, mode: "auto", panel: pane } as never);
+			expect(html.match(/class="primary bar-button/g) ?? []).toHaveLength(1);
+		}
+	});
+
+	it("continues rather than hands off from the configure pane", () => {
+		// There is nothing to send from a settings form; the button returns to
+		// the mode the operator came from.
+		const html = renderPlaybook({ ...base, mode: "auto", panel: "configure" } as never);
+		expect(html).toContain("Continue");
+		expect(html).toMatch(/class="primary bar-button"[^>]*data-panel="auto"/s);
+		expect(html).not.toContain('data-action="handoff"');
+	});
+
+	it("colours the commit button by what it hands over", () => {
+		expect(renderPlaybook({ ...base, mode: "auto", panel: "auto" } as never)).toContain("bar-button danger");
+		expect(renderPlaybook({ ...base, mode: "guided" } as never)).not.toContain("danger");
 	});
 });

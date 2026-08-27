@@ -1,11 +1,10 @@
 /**
- * Playbook components: the coverage banner, parameter fields, and step cards.
+ * Playbook components: parameter fields and step cards.
  *
  * Pure string functions, loaded by Node in tests and by the browser as ES
  * modules.
  *
  * @typedef {import("../domain/types.js").PlaybookStep} PlaybookStep
- * @typedef {import("../domain/types.js").DlpCoverage} DlpCoverage
  */
 import { esc } from "../../../platform/html.mjs";
 
@@ -30,41 +29,6 @@ const KIND_LABEL = {
 	verify: "Verify",
 	note: "Next",
 };
-
-/**
- * The coverage banner: what the estate looks like right now.
- *
- * `notEvaluated` gets its own line whenever it is non-zero, rather than being
- * folded into a single percentage. An operator who reads "0 uncovered" for an
- * estate nobody measured will conclude they are protected, which is the exact
- * wrong action.
- *
- * @param {DlpCoverage | null} coverage
- * @param {string} summary
- * @returns {string}
- */
-export function coverageBanner(coverage, summary) {
-	const stats = coverage
-		? `<div class="coverage-stats">
-        <span class="stat"><b>${coverage.covered}</b> covered</span>
-        <span class="stat"><b>${coverage.uncovered}</b> uncovered</span>
-        <span class="stat"><b>${coverage.notEvaluated}</b> not evaluated</span>
-      </div>`
-		: "";
-
-	const examples =
-		coverage && coverage.examples.length
-			? `<p class="coverage-examples">For example: ${coverage.examples
-					.map((e) => `${esc(e.title)} <span class="dim">(${esc(e.platform)})</span>`)
-					.join(", ")}</p>`
-			: "";
-
-	return `<section class="coverage" aria-label="DLP coverage">
-    <p class="coverage-summary">${esc(summary)}</p>
-    ${stats}
-    ${examples}
-  </section>`;
-}
 
 /**
  * One parameter field.
@@ -96,33 +60,41 @@ export function paramField(param) {
 }
 
 /**
- * The mode toggle.
+ * The pane switcher: configure, or one of the two ways to run.
  *
- * A segmented control rather than a checkbox called "YOLO": the two modes are
- * both legitimate choices with different tradeoffs, and naming them as a pair
- * makes the tradeoff visible in a way "on/off" does not. The description under
- * the selected option changes, because the honest sentence differs — in guided
- * mode nothing here touches the tenant, and in auto mode something does.
+ * A segmented control, not three cards. It lives in the action bar at the
+ * bottom of the screen, next to the button that commits — the choice and the
+ * consequence of the choice are one gesture, so they belong in one place. Put
+ * the switcher at the top and the operator picks a mode, scrolls a screenful of
+ * PowerShell, and has to remember what they picked by the time they reach the
+ * button.
  *
- * @param {import("../domain/types.js").ExecutionMode} mode
+ * Labels only. The per-mode explanations are gone: the auto pane's own
+ * rationale already covers the sign-in caveat, and the button says what it
+ * does, so a hint line repeating both only made the bar taller.
+ *
+ * @param {import("../domain/types.js").PlaybookPanel} panel
+ * @param {boolean} [paramsAreDefault]
  * @returns {string}
  */
-export function modeToggle(mode) {
-	const option = (/** @type {string} */ value, /** @type {string} */ label, /** @type {string} */ hint) => `
+export function panelTabs(panel, paramsAreDefault = true) {
+	// A dot, not a count. The operator does not need to know how many fields
+	// are untouched, only that the pane is worth opening once.
+	const unset = paramsAreDefault ? `<i class="tab-dot" aria-label="using defaults"></i>` : "";
+
+	const tab = (/** @type {string} */ value, /** @type {string} */ label, /** @type {string} */ badge = "") => `
     <button
       type="button"
-      class="mode-option${mode === value ? " selected" : ""}"
-      data-mode="${esc(value)}"
-      role="radio"
-      aria-checked="${mode === value}"
-    >
-      <span class="mode-label">${esc(label)}</span>
-      <span class="mode-hint">${esc(hint)}</span>
-    </button>`;
+      class="segment${panel === value ? " selected" : ""}"
+      data-panel="${esc(value)}"
+      role="tab"
+      aria-selected="${panel === value}"
+    >${esc(label)}${badge}</button>`;
 
-	return `<div class="mode" role="radiogroup" aria-label="How to run this playbook">
-    ${option("guided", "Walk me through it", "You run each command, one step at a time.")}
-    ${option("auto", "Just run it", "Copilot runs the whole script. You still sign in.")}
+	return `<div class="segmented" role="tablist" aria-label="Configure this playbook or choose how to run it">
+    ${tab("configure", "Configure policy", unset)}
+    ${tab("guided", "Walk me through it")}
+    ${tab("auto", "Just run it")}
   </div>`;
 }
 

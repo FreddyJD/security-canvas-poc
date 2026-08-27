@@ -63,6 +63,16 @@ export function playbookViewModel({ store }) {
 		title: playbook.title,
 		summary: playbook.summary,
 		mode: state.mode,
+		panel: state.panel,
+		/**
+		 * Whether the parameters are still at their defaults.
+		 *
+		 * The Configure tab is easy to never open, so the tab itself has to say
+		 * whether anything behind it has been touched. "ProjectArgus" is a
+		 * placeholder SIT — an operator who hands off without changing it built
+		 * a policy against a name that probably does not exist in their tenant.
+		 */
+		paramsAreDefault: playbook.params.every((p) => (state.params[p.id] ?? p.default) === p.default),
 		rationale: playbook.rationale[state.mode] ?? playbook.rationale.guided,
 		autoScript: playbook.buildScript(state.params),
 		params: playbook.params.map((p) => ({ ...p, value: state.params[p.id] ?? p.default })),
@@ -92,6 +102,26 @@ export function setMode({ store }, raw) {
 		return { ok: false, errors: [`Mode must be "guided" or "auto".`] };
 	}
 	store.setMode(raw);
+	return { ok: true };
+}
+
+/**
+ * Show a pane.
+ *
+ * Separate from {@link setMode} because the two say different things. Setting a
+ * mode changes what the handoff will do; showing a pane changes what is on
+ * screen. They coincide for "guided" and "auto" — the store routes those
+ * through setMode — and diverge for "configure", which has no handoff at all.
+ *
+ * @param {{ store: PlaybookStore }} ctx
+ * @param {unknown} raw
+ * @returns {{ ok: true } | { ok: false, errors: string[] }}
+ */
+export function setPanel({ store }, raw) {
+	if (raw !== "configure" && raw !== "guided" && raw !== "auto") {
+		return { ok: false, errors: [`Panel must be "configure", "guided", or "auto".`] };
+	}
+	store.setPanel(raw);
 	return { ok: true };
 }
 

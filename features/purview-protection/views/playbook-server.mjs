@@ -81,6 +81,14 @@ export async function startPlaybookServer(ctx) {
 			return json(result.ok ? { ok: true } : { ok: false, errors });
 		}
 
+		if (req.method === "POST" && url.pathname === "/api/playbook/panel") {
+			const { panel } = await readJson(req);
+			const result = playbook.setPanel(ctx, panel);
+			errors = result.ok ? [] : result.errors;
+			if (!result.ok) events.broadcast();
+			return json(result.ok ? { ok: true } : { ok: false, errors });
+		}
+
 		if (req.method === "POST" && url.pathname === "/api/playbook/done") {
 			const { stepId } = await readJson(req);
 			ctx.store.toggleDone(String(stepId));
