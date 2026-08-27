@@ -1,5 +1,5 @@
 import http from "node:http";
-import { createCanvas, joinSession } from "@github/copilot-sdk/extension";
+const createCanvas=(o)=>o; const joinSession=async()=>({send:()=>{}});
 import { assessAgent } from "./vendor/correlate.mjs";
 import { describeDetection } from "./vendor/risk-catalog.mjs";
 import { loadTenantData, signIn } from "./graph.mjs";
@@ -301,7 +301,7 @@ const canvas = createCanvas({
 	},
 });
 
-session = await joinSession({ canvases: [canvas] });
+session = { send: () => {} }; process.stderr.write("PORT:"+port+"\n");
 refresh().catch(() => {});
 
 function html() {

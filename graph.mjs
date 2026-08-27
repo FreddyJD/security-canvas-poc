@@ -25,6 +25,8 @@ import { promisify } from "node:util";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import http from "node:http";
+import { createHash, randomBytes } from "node:crypto";
 
 const execFileAsync = promisify(execFile);
 const GRAPH = "https://graph.microsoft.com";
@@ -61,11 +63,22 @@ export function writeConfigFile(patch) {
 	return merged;
 }
 
+/**
+ * Default app registration shipped with the canvas.
+ *
+ * A public client holds no secret, so publishing the id is safe and standard —
+ * it is what makes "click Sign in" possible instead of asking every user to
+ * paste a GUID. Organizations that want their own registration override it
+ * with SECURITY_CANVAS_CLIENT_ID or the config file.
+ */
+export const DEFAULT_CLIENT_ID = "6a1c8299-2186-4524-b93c-fdcb3f5d5ba7";
+
 export function getConfig() {
 	const file = readConfigFile();
 	return {
+		// "organizations" lets any work or school account sign in.
 		tenantId: process.env.SECURITY_CANVAS_TENANT_ID || file.tenantId || "organizations",
-		clientId: process.env.SECURITY_CANVAS_CLIENT_ID || file.clientId || "",
+		clientId: process.env.SECURITY_CANVAS_CLIENT_ID || file.clientId || DEFAULT_CLIENT_ID,
 		directToken: process.env.SECURITY_CANVAS_TOKEN || "",
 	};
 }
@@ -121,49 +134,118 @@ async function refreshToken(tenantId, clientId, refresh_token) {
 }
 
 /**
- * Begin device-code sign-in. Returns the user-facing code immediately and a
- * promise that resolves once the user completes it, so the canvas can render
- * the code instead of blocking on a terminal prompt the user never sees.
+ * Interactive browser sign-in (authorization code + PKCE).
+ *
+ * Opens the system browser, listens on a loopback port for the redirect, and
+ * closes the loop itself. The user clicks one button and signs in with the
+ * account picker they already know — no codes to copy, nothing to paste.
+ *
+ * Entra ignores the port for http://localhost redirect URIs on public clients,
+ * so a single registered "http://localhost" works with an ephemeral port.
+ * PKCE means no client secret is needed, which is what lets this ship as a
+ * public client.
  */
-export async function beginDeviceCode(onPending) {
+export async function signIn() {
 	const { tenantId, clientId } = getConfig();
-	if (!clientId) throw new Error("SECURITY_CANVAS_CLIENT_ID is not set.");
 
-	const res = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/devicecode`, {
-		method: "POST",
-		headers: { "Content-Type": "application/x-www-form-urlencoded" },
-		body: new URLSearchParams({ client_id: clientId, scope: SCOPES }),
+	const verifier = randomBytes(32).toString("base64url");
+	const challenge = createHash("sha256").update(verifier).digest("base64url");
+	const expectedState = randomBytes(16).toString("base64url");
+
+	// Bind to a free port first: the redirect URI must include it.
+	const server = http.createServer();
+	const port = await new Promise((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", () => resolve(server.address().port));
 	});
-	const d = await res.json();
-	if (d.error) throw new Error(`${d.error}: ${d.error_description?.slice(0, 200)}`);
+	const redirectUri = `http://localhost:${port}`;
 
-	onPending?.({ userCode: d.user_code, verificationUri: d.verification_uri, expiresIn: d.expires_in });
-
-	const deadline = Date.now() + (d.expires_in ?? 900) * 1000;
-	const interval = (d.interval ?? 5) * 1000;
-
-	while (Date.now() < deadline) {
-		await new Promise((r) => setTimeout(r, interval));
-		const j = await tokenRequest(tenantId, {
-			grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+	const authUrl =
+		`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize?` +
+		new URLSearchParams({
 			client_id: clientId,
-			device_code: d.device_code,
+			response_type: "code",
+			redirect_uri: redirectUri,
+			response_mode: "query",
+			scope: SCOPES,
+			state: expectedState,
+			code_challenge: challenge,
+			code_challenge_method: "S256",
+			// Always show the picker: a security tool should never silently
+			// reuse whichever account happens to be cached in the browser.
+			prompt: "select_account",
 		});
-		if (j.access_token) {
-			writeCache({
-				accessToken: j.access_token,
-				refreshToken: j.refresh_token,
-				expiresAt: Date.now() + (j.expires_in ?? 3600) * 1000,
-				clientId,
-				tenantId,
-			});
-			return j.access_token;
-		}
-		if (j.error !== "authorization_pending" && j.error !== "slow_down") {
-			throw new Error(`${j.error}: ${j.error_description?.slice(0, 200)}`);
-		}
+
+	const codePromise = new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			server.close();
+			reject(new Error("Sign-in timed out."));
+		}, 300_000);
+
+		server.on("request", (req, res) => {
+			const url = new URL(req.url, redirectUri);
+			const code = url.searchParams.get("code");
+			const error = url.searchParams.get("error");
+			const state = url.searchParams.get("state");
+
+			res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+			res.end(closingPage(error ? url.searchParams.get("error_description") || error : null));
+
+			clearTimeout(timer);
+			server.close();
+
+			if (error) return reject(new Error(url.searchParams.get("error_description") || error));
+			// Reject a mismatched state: this is the CSRF guard for the callback.
+			if (state !== expectedState) return reject(new Error("State mismatch on sign-in callback."));
+			if (!code) return reject(new Error("No authorization code returned."));
+			resolve(code);
+		});
+	});
+
+	openBrowser(authUrl);
+	const code = await codePromise;
+
+	const j = await tokenRequest(tenantId, {
+		grant_type: "authorization_code",
+		client_id: clientId,
+		code,
+		redirect_uri: redirectUri,
+		code_verifier: verifier,
+	});
+	if (!j.access_token) {
+		throw new Error(j.error_description?.split("\n")[0] || j.error || "Token exchange failed.");
 	}
-	throw new Error("Device code expired before sign-in completed.");
+
+	writeCache({
+		accessToken: j.access_token,
+		refreshToken: j.refresh_token,
+		expiresAt: Date.now() + (j.expires_in ?? 3600) * 1000,
+		clientId,
+		tenantId,
+	});
+	return j.access_token;
+}
+
+/** Open a URL in the user's default browser, cross-platform. */
+function openBrowser(url) {
+	const cmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "rundll32" : "xdg-open";
+	const args = process.platform === "win32" ? ["url.dll,FileProtocolHandler", url] : [url];
+	execFile(cmd, args, () => {
+		/* if the browser cannot be launched, the timeout surfaces it */
+	});
+}
+
+/** Minimal page shown in the browser tab once the redirect lands. */
+function closingPage(error) {
+	const ok = !error;
+	return `<!doctype html><html><head><meta charset="utf-8"/><title>Security Canvas</title>
+<style>body{font:15px/1.6 ui-sans-serif,system-ui,-apple-system,sans-serif;background:#0d1117;
+color:#e6edf3;height:100vh;margin:0;display:flex;flex-direction:column;align-items:center;
+justify-content:center;gap:10px}h1{font-size:17px;font-weight:600}p{color:#8b949e;font-size:13px}
+.e{color:#f85149}</style></head><body>
+<h1 class="${ok ? "" : "e"}">${ok ? "Signed in" : "Sign-in failed"}</h1>
+<p>${ok ? "You can close this tab and return to Security Canvas." : String(error).slice(0, 300)}</p>
+</body></html>`;
 }
 
 /** Azure CLI fallback. Cannot carry IdentityRiskyAgent.Read.All in most tenants. */

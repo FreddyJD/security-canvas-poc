@@ -59,76 +59,26 @@ mirrors how [`mobile-canvas-ghcp`](https://github.com/Redth/mobile-canvas-ghcp) 
 > entrypoint is only at `extensions/<name>/extension.mjs` installs "successfully" and is then
 > silently ignored.
 
-### Real tenant data
+### Sign in
 
-The canvas opens on a sign-in screen and shows **only real data from your tenant**. Click **Sign in**,
-complete the device-code prompt, and the triage queue loads automatically. Sign-in is cached per
+Open Security Canvas and click **Sign in with Microsoft**. Your browser opens, you pick your work
+account, and the triage queue loads. Nothing to configure, no codes to copy. Sign-in is cached on the
 device, so it is a one-time step.
 
-There is deliberately **no sample or demo mode**. A security console that can display invented agents
-is worse than one that shows nothing: an analyst who mistakes placeholder rows for their tenant draws
-exactly the wrong conclusion, and the failure is silent. Every non-connected state instead names the
-problem — missing configuration, expired session, insufficient permission, or missing licensing.
+The canvas ships with its own Entra app registration (a public client, which holds no secret — the
+client id is safe to publish and is what makes one-click sign-in possible). Under the hood it uses
+the OAuth authorization-code flow with PKCE and a loopback redirect.
 
-Setup is three steps, all inside the canvas:
+**Requirements:** `IdentityRiskyAgent.Read.All` consented in your tenant, a Security Reader-class
+role, and Microsoft Agent 365 licensing. If any are missing the canvas says which one rather than
+showing an empty queue.
 
-1. Open Security Canvas. It asks for an **Application (client) ID**.
-2. Paste one and click **Save and sign in**.
-3. Complete the device-code prompt. The queue loads automatically.
+To use your own app registration instead, set `SECURITY_CANVAS_CLIENT_ID` or write
+`~/.copilot/security-canvas/config.json`:
 
-Configuration persists to `~/.copilot/security-canvas/config.json` and tokens to
-`token-cache.json` beside it, both mode `0600`. Sign-in is a one-time step per device.
-
-**The Azure CLI cannot be used.** It is a first-party app pre-authorized for a fixed set of Graph
-scopes, and `IdentityRiskyAgent.Read.All` is not among them, so an `az` token returns 403 no matter
-how privileged the signed-in user is (`AADSTS65002`). A dedicated app registration is required.
-
-If your tenant does not have one yet, a Global Administrator runs:
-
-```bash
-# 1. Register a public client app
-az ad app create --display-name "Security Canvas" \
-  --is-fallback-public-client true \
-  --required-resource-accesses '[{
-    "resourceAppId": "00000003-0000-0000-c000-000000000000",
-    "resourceAccess": [
-      {"id": "3215c57f-3faa-4295-95c2-6f14a5bc6124", "type": "Scope"},
-      {"id": "8f6a01e7-0391-4ee5-aa22-a3af122cef27", "type": "Scope"}
-    ]
-  }]'
-
-# 2. Grant admin consent (IdentityRiskyAgent.Read.All is admin-restricted)
-az ad app permission admin-consent --id <appId>
+```json
+{ "clientId": "<your-app-id>", "tenantId": "<your-tenant-id>" }
 ```
-
-Hand the resulting **Application (client) ID** to whoever uses the canvas. Everything else happens
-in the UI.
-
-Environment variables still override the config file, which is useful for CI:
-
-| Variable | Purpose |
-|---|---|
-| `SECURITY_CANVAS_CLIENT_ID` | App registration used for device-code sign-in. |
-| `SECURITY_CANVAS_TENANT_ID` | Tenant to sign in against. Defaults to `organizations`. |
-| `SECURITY_CANVAS_TOKEN` | A Graph access token, used as-is. |
-
-> Configuration is read from disk first because the Copilot app launches extensions **without your
-> shell environment** — variables exported in a terminal are invisible to the canvas. Requiring them
-> would make the canvas impossible to configure from inside the app.
-
-**Requirements:** `IdentityRiskyAgent.Read.All` with admin consent; a Security Reader, Security
-Operator, or Security Administrator role; and Microsoft Agent 365 licensing. Missing any of the three
-surfaces a specific message rather than an empty queue.
-
-> **Conditional Access.** Tenants enforcing Token Protection or device compliance may block sign-in
-> from an unmanaged device (`AADSTS530084`, `AADSTS53003`). That is a policy decision, not a bug —
-> the canvas names the error and offers a retry rather than failing silently.
-
-> **Why the canvas has no npm dependencies.** A plugin install is a plain file copy: `npm install`
-> never runs and `node_modules` never exists at runtime. Verified against a real install directory.
-> So the canvas imports only Node builtins, `@github/copilot-sdk` (injected by the app), and
-> `vendor/` — the scoring engine, generated from `src/` by `npm run build:canvas`. Never edit
-> `vendor/` by hand.
 
 ### MCP server
 
