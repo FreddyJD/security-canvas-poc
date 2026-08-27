@@ -6,13 +6,19 @@
  * `EndpointDlpRestrictions`, which the UI does not surface — so Security &
  * Compliance PowerShell is the only way to produce this policy.
  *
- * That constraint is why this feature exists at all. There is no public REST
- * API to call, so the honest design is not to pretend we can act: it is to
- * hand the operator an exact, reviewable script and let them run it in a
- * session they already trust. The canvas holds the sequence and the state; the
- * human holds the credentials.
+ * Two artifacts come out of the same definition:
  *
- * The script is reproduced from the Purview agent-DLP guidance. It is
+ *   buildSteps   the guided sequence — eight blocks a human reads and pastes
+ *   buildScript  one composed script, for an agent to run end to end
+ *
+ * They are written separately rather than derived from one another, because
+ * unattended execution changes the requirements rather than the wrapper: the
+ * script must be idempotent, must stop on a missing sensitive information type
+ * that a reader would have caught, and must live in a single session because
+ * `Connect-IPPSSession` does not survive across invocations. Concatenating the
+ * guided steps would satisfy none of that.
+ *
+ * The commands are reproduced from the Purview agent-DLP guidance. They are
  * deliberately parameterized only where a tenant genuinely differs (policy
  * name, SIT name, confidence level) — every structural part, especially the
  * `EnforcementOverrides` JSON, is fixed, because that JSON is the part that
@@ -21,6 +27,7 @@
  *
  * @typedef {import("./types.js").Playbook} Playbook
  * @typedef {import("./types.js").PlaybookStep} PlaybookStep
+ * @typedef {import("./types.js").PlaybookScript} PlaybookScript
  */
 
 export const CONFIDENCE_LEVELS = /** @type {const} */ (["Low", "Medium", "High"]);
@@ -32,11 +39,18 @@ export const PROTECT_AGENTS_PLAYBOOK = {
 	summary:
 		"Create an agent-scoped Purview DLP policy that blocks AI agents from reading content matching a sensitive information type.",
 
-	rationale: [
-		"Purview has no public API for this. Agent scoping is carried by EndpointDlpRestrictions, which the compliance portal cannot express, so Security & Compliance PowerShell is the only way to create this policy.",
-		"Nothing on this screen applies the policy. It builds the exact commands and you run them in your own session — the credentials that can change your tenant stay with you.",
-		"When you have run it, ask me to check coverage again and I will confirm the policy is listed.",
-	],
+	rationale: {
+		guided: [
+			"Purview has no public API for this. Agent scoping is carried by EndpointDlpRestrictions, which the compliance portal cannot express, so Security & Compliance PowerShell is the only way to create this policy.",
+			"Nothing on this screen applies the policy. It builds the exact commands and you run them in your own session — the credentials that can change your tenant stay with you.",
+			"When you have run it, ask me to check coverage again and I will confirm the policy is listed.",
+		],
+		auto: [
+			"Purview has no public API for this. Agent scoping is carried by EndpointDlpRestrictions, which the compliance portal cannot express, so Security & Compliance PowerShell is the only way to create this policy.",
+			"In this mode Copilot runs the whole script in a terminal instead of walking you through it. You still sign in yourself — Connect-IPPSSession opens a browser prompt and the script waits for it, so the credentials never leave you.",
+			"The script is idempotent and reports what it did at the end. Re-running it after a failure is safe: it reuses an existing policy and skips a rule that is already there.",
+		],
+	},
 
 	params: [
 		{
@@ -215,6 +229,124 @@ export const PROTECT_AGENTS_PLAYBOOK = {
 				],
 			},
 		];
+	},
+
+	/**
+	 * The whole playbook as one script, for auto mode.
+	 *
+	 * Three properties matter here that do not matter in guided mode, because
+	 * nobody is reading between the commands:
+	 *
+	 * **One session.** `Connect-IPPSSession` authenticates the *process*.
+	 * Splitting this across invocations would sign in and then throw the
+	 * session away, so the whole thing is one script or it is nothing.
+	 *
+	 * **Idempotent.** An unattended script gets re-run — after a timeout, a
+	 * failed sign-in, a half-finished attempt. `New-DlpCompliancePolicy` on an
+	 * existing name is a hard error, so existence is checked first and the
+	 * second run reports "already existed" rather than failing at step 4 with
+	 * a policy half-built.
+	 *
+	 * **Stops on a missing SIT.** This is the one condition a human reading
+	 * step 3 would have caught. Without the SIT the rules still create — and
+	 * enforce nothing at all, which is the worst outcome available: a tenant
+	 * that looks protected. So it throws before creating anything.
+	 *
+	 * `$ErrorActionPreference = "Stop"` makes the rest fail loudly instead of
+	 * continuing past a broken step, which unattended is the difference between
+	 * a clear error and a policy with one of its two rules.
+	 *
+	 * @param {Record<string, string>} p
+	 * @returns {PlaybookScript}
+	 */
+	buildScript(p) {
+		const policy = p.policyName ?? "AIAgentPolicy";
+		const sit = p.sitName ?? "ProjectArgus";
+		const confidence = p.confidenceLevel ?? "Low";
+
+		const code = [
+			`$ErrorActionPreference = "Stop"`,
+			``,
+			`# 1. Module`,
+			`if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {`,
+			`  Write-Host "Installing ExchangeOnlineManagement..."`,
+			`  Install-Module -Name ExchangeOnlineManagement -Scope CurrentUser -Force -AllowClobber`,
+			`}`,
+			`Import-Module ExchangeOnlineManagement`,
+			``,
+			`# 2. Sign in. Opens a browser prompt; the script waits for it.`,
+			`Write-Host "Connecting to Security & Compliance PowerShell..."`,
+			`Connect-IPPSSession -ShowBanner:$false`,
+			``,
+			`# 3. The rules match on this SIT. Without it they would create and`,
+			`#    enforce nothing, so stop here rather than build a policy that`,
+			`#    only looks like protection.`,
+			`$sit = Get-DlpSensitiveInformationType | Where-Object { $_.Name -eq '${sit}' }`,
+			`if (-not $sit) {`,
+			`  throw "Sensitive information type '${sit}' does not exist in this tenant. Create it in the Purview portal, or re-run with a SIT that exists. Nothing was changed."`,
+			`}`,
+			`Write-Host "Found sensitive information type '${sit}'."`,
+			``,
+			`# 4. Policy. Re-running is safe: an existing policy is reused, since`,
+			`#    New-DlpCompliancePolicy on a taken name is a hard error.`,
+			`#    try/catch rather than -ErrorAction: ErrorActionPreference is Stop`,
+			`#    and the REST-backed cmdlets can throw a terminating error for a`,
+			`#    missing identity, which -ErrorAction would not suppress. That is`,
+			`#    the fresh-tenant path, so getting it wrong breaks the common case.`,
+			`$policy = $null`,
+			`try { $policy = Get-DlpCompliancePolicy -Identity "${policy}" -ErrorAction Stop } catch { }`,
+			`if ($policy) {`,
+			`  Write-Host "Policy '${policy}' already exists; reusing it."`,
+			`} else {`,
+			`  New-DlpCompliancePolicy \``,
+			`    -DisplayName "${policy}" \``,
+			`    -Name "${policy}" \``,
+			`    -Mode Enable \``,
+			`    -EndpointDlpLocation "All" \``,
+			`    -EndpointDlpExtendedLocations '[{"GroupSet":"Device","Inclusions":[{"Type":"IndividualResource","Identity":"All"}]}]' | Out-Null`,
+			`  Write-Host "Created policy '${policy}'."`,
+			`}`,
+			``,
+			`# 5 & 6. Both rules. The tool-scoped override does not cover an agent`,
+			`#        reading content directly, so one alone leaves that path open.`,
+			`$overridesToolJson = '[{"Condition":{"AgentScoping":[{"Agent":{"Inclusions":["all"],"Exclusions":[]}, "Tools":{"Inclusions":["all"],"Exclusions":[]}}],"Direction":"Both"},"EnforcementMode":"Block"}]'`,
+			`$overridesPromptJson = '[{"Condition":{"AgentScoping":[{"Agent":{"Inclusions":["all"],"Exclusions":[]}}],"Direction":"Both"},"EnforcementMode":"Block"}]'`,
+			``,
+			`$existingRules = @()`,
+			`try { $existingRules = @(Get-DlpComplianceRule -Policy "${policy}" -ErrorAction Stop | Select-Object -ExpandProperty Name) } catch { }`,
+			``,
+			`foreach ($rule in @(`,
+			`  @{ Name = "${sit}AgentAndToolBlock"; Overrides = $overridesToolJson },`,
+			`  @{ Name = "${sit}AgentBlock";        Overrides = $overridesPromptJson }`,
+			`)) {`,
+			`  if ($existingRules -contains $rule.Name) {`,
+			`    Write-Host "Rule '$($rule.Name)' already exists; skipping."`,
+			`    continue`,
+			`  }`,
+			`  New-DlpComplianceRule \``,
+			`    -Policy "${policy}" \``,
+			`    -Name $rule.Name \``,
+			`    -ContentContainsSensitiveInformation @{ Name="${sit}"; mincount="1"; maxcount="-1"; confidenceLevel="${confidence}" } \``,
+			`    -EndpointDlpRestrictions @(@{ Setting="AccessByAIAgent"; Value="Block"; EnforcementOverrides=$rule.Overrides }) | Out-Null`,
+			`  Write-Host "Created rule '$($rule.Name)'."`,
+			`}`,
+			``,
+			`# 7. Read back what is actually there — the only evidence that counts.`,
+			`Write-Host ""`,
+			`Write-Host "--- Result ---"`,
+			`Get-DlpCompliancePolicy -Identity "${policy}" | Format-List Name, Mode, EndpointDlpLocation`,
+			`Get-DlpComplianceRule -Policy "${policy}" | Format-Table Name, Disabled`,
+			`Write-Host "Policy changes take up to an hour to reach endpoints."`,
+			``,
+			`Disconnect-ExchangeOnline -Confirm:$false | Out-Null`,
+		].join("\n");
+
+		return {
+			language: "powershell",
+			code,
+			destructive: true,
+			effect: `Creates the DLP policy "${policy}" and two agent-scoped rules blocking all agents from content matching "${sit}". Reuses anything that already exists.`,
+		};
 	},
 };
 

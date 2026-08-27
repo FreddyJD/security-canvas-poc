@@ -96,6 +96,37 @@ export function paramField(param) {
 }
 
 /**
+ * The mode toggle.
+ *
+ * A segmented control rather than a checkbox called "YOLO": the two modes are
+ * both legitimate choices with different tradeoffs, and naming them as a pair
+ * makes the tradeoff visible in a way "on/off" does not. The description under
+ * the selected option changes, because the honest sentence differs — in guided
+ * mode nothing here touches the tenant, and in auto mode something does.
+ *
+ * @param {import("../domain/types.js").ExecutionMode} mode
+ * @returns {string}
+ */
+export function modeToggle(mode) {
+	const option = (/** @type {string} */ value, /** @type {string} */ label, /** @type {string} */ hint) => `
+    <button
+      type="button"
+      class="mode-option${mode === value ? " selected" : ""}"
+      data-mode="${esc(value)}"
+      role="radio"
+      aria-checked="${mode === value}"
+    >
+      <span class="mode-label">${esc(label)}</span>
+      <span class="mode-hint">${esc(hint)}</span>
+    </button>`;
+
+	return `<div class="mode" role="radiogroup" aria-label="How to run this playbook">
+    ${option("guided", "Walk me through it", "You run each command, one step at a time.")}
+    ${option("auto", "Just run it", "Copilot runs the whole script. You still sign in.")}
+  </div>`;
+}
+
+/**
  * A script block with a copy button.
  *
  * Copy rather than run, everywhere and always. This process has no business
@@ -198,4 +229,26 @@ export function progressBar(done, total) {
     <div class="progress-track"><i style="width:${pct}%"></i></div>
     <span class="progress-label">${done} of ${total} steps marked done</span>
   </div>`;
+}
+
+/**
+ * The auto-mode panel: the composed script, and what running it will do.
+ *
+ * The script is shown in full rather than summarised. The operator is about to
+ * let something else run it as an administrator, which makes reading it first
+ * more important than in guided mode, not less — a collapsed "details" would
+ * be the wrong economy.
+ *
+ * @param {NonNullable<import("../domain/types.js").PlaybookScript>} script
+ * @returns {string}
+ */
+export function autoPanel(script) {
+	return `<section class="auto" aria-label="The script Copilot will run">
+    <h2>What will run</h2>
+    <p class="auto-note">
+      One script, one PowerShell session. It signs you in, creates the policy and both rules, and reads
+      back the result. It is safe to re-run: anything that already exists is reused.
+    </p>
+    ${scriptBlock("auto", script)}
+  </section>`;
 }

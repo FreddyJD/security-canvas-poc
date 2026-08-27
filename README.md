@@ -33,7 +33,7 @@ composition roots.
 |---|---|---|
 | `agent-inventory` | "What are my agents?" | ZTAI unified inventory (`/rp/zerotrustai`) — the estate across M365 Copilot, Copilot Studio, Endpoint |
 | `risky-agents` | "What needs triage?" | Entra ID Protection (`/beta/identityProtection`) — identity risk, scored cross-pillar |
-| `purview-protection` | "Protect my sensitive data" | None — Purview has no API for this, so it hands the operator a script (see below) |
+| `purview-protection` | "Protect my sensitive data" | None — Purview has no API for this, so it produces a script: guided steps, or one script Copilot runs (see below) |
 
 Both use the same layering:
 
@@ -86,15 +86,36 @@ Purview cannot express agent-scoped DLP through its portal, and has no public RE
 The scoping is carried by `EndpointDlpRestrictions`, which only Security & Compliance PowerShell
 can set. There is nothing to call.
 
-So `purview-protection` does not pretend to act. It builds the exact commands, explains what each
-one changes, and hands them back to the Copilot session as instructions — the operator runs them
-in their own authenticated shell. The canvas holds the sequence and the progress; the human holds
-the credentials. That is the honest shape for this problem, and it is what a canvas is genuinely
-better at than a chat reply: it survives across turns, so you can run step 4, come back, and see
-where you were.
+So `purview-protection` does not pretend there is an API. It builds the exact commands, explains
+what each one changes, and offers two ways to run them:
+
+| Mode | Who runs it | What it returns |
+|---|---|---|
+| **Guided** (default) | The operator, step by step in their own shell | Eight explained steps with progress that survives across turns |
+| **Auto** | Copilot, in a terminal | One composed script — idempotent, and it stops before changing anything if the SIT is missing |
+
+Guided is the default and auto has to be asked for by name, in the UI or as `mode: "auto"`. The
+asymmetry is the point: these commands rewrite tenant DLP policy, so the mode where nobody reads
+them first is the one that requires an explicit request. In both modes the operator authenticates —
+`Connect-IPPSSession` opens a browser prompt and the script waits for it, so the credentials that
+can change the tenant never leave them.
+
+The two artifacts are written separately rather than one derived from the other, because unattended
+execution changes the requirements rather than the wrapper. The auto script must be idempotent (it
+gets re-run after every failed sign-in), must live in one session (`Connect-IPPSSession`
+authenticates the process, so splitting it would sign in and throw the session away), and must stop
+on the one condition a reader would have caught — a missing sensitive information type, which would
+otherwise produce two rules that enforce nothing and a tenant that *looks* protected. Concatenating
+the guided steps would satisfy none of that. A test asserts both artifacts carry byte-identical
+`EnforcementOverrides` JSON, since if they drift the mode you picked decides whether you are
+actually protected.
+
+The canvas holds the sequence and the progress; the human holds the credentials. That is what a
+canvas is genuinely better at than a chat reply: it survives across turns, so you can run step 4,
+come back, and see where you were.
 
 A playbook is **data** — [`domain/protect-agents-playbook.mjs`](features/purview-protection/domain/protect-agents-playbook.mjs)
-is a definition plus one script builder. Adding a second playbook is a file and a registration,
+is a definition plus two script builders. Adding a second playbook is a file and a registration,
 not a new screen.
 
 Two things it is deliberately careful about:
@@ -103,14 +124,18 @@ Two things it is deliberately careful about:
   administrator then runs. PowerShell has too many quoting contexts to escape reliably, so
   [`domain/validate.mjs`](features/purview-protection/domain/validate.mjs) rejects anything outside
   `[A-Za-z0-9 _.-]` and the script is never produced. `x"; Remove-DlpCompliancePolicy ...` does not
-  get a chance to be clever.
-- **Every surface says "present, do not execute".** A block of PowerShell in a tool result reads to
-  a model like a task. The prompt, the tool description and the tool output each state that the
-  user runs these — because the failure mode is a model helpfully rewriting your tenant's DLP policy.
+  get a chance to be clever. Both builders are downstream of it — auto mode is not a second, weaker
+  path.
+- **Each mode says one thing, emphatically.** A block of PowerShell in a tool result reads to a
+  model like a task, so guided mode states "present, do not execute" in the prompt, the tool
+  description and the tool output. Auto mode has the opposite failure — a model handed both a
+  script and a numbered walkthrough takes the walkthrough, because it is the more conservative
+  reading and it is wrong when the user just asked you to run it. So the auto result carries the
+  script and *no* steps: offering one artifact removes the choice.
 
 Progress is worded as a claim throughout ("I ran this", "3 of 8 steps marked done"). Nothing here
-can see the operator's terminal, so the only evidence that the protection is real is re-reading
-coverage afterwards — which is what the last step asks for.
+can see the operator's terminal, so in guided mode the only evidence that the protection is real is
+re-reading coverage afterwards — which is what the last step asks for.
 
 ### Why a view registry, not generic components
 
@@ -169,7 +194,7 @@ To use your own app registration instead, set `SECURITY_CANVAS_CLIENT_ID` or wri
 | Tool | Purpose |
 |---|---|
 | `list_agents` | The whole agent estate across every Microsoft platform. Answers "what are my agents?". |
-| `get_protect_agents_playbook` | The agent-scoped DLP playbook: steps plus the exact PowerShell for the user to run. |
+| `get_protect_agents_playbook` | The agent-scoped DLP playbook. Defaults to guided steps for the user to run; `mode: "auto"` returns one script for the agent to run, and must be asked for. |
 | `get_agent_estate_summary` | Tenant totals: counts by risk level, by platform, and coverage gaps. |
 | `list_risky_agents` | Triage-ordered list of Entra-flagged agents. The security entry point. |
 | `explain_agent_risk` | One agent's detection history in plain language, with remediation. |
@@ -329,7 +354,7 @@ platform/       graph.mjs        Graph client — token provider injected
                 theme-toggle.mjs   light/dark switching, shared by every panel
                 html.mjs         esc() — the one escaping boundary, shared by all
 
-test/           purview-playbook.test.ts      58 — injection defence, playbook shape, coverage
+test/           purview-playbook.test.ts      91 — injection defence, playbook shape, coverage, auto mode
                 scoring.test.ts               37 — scoring properties + live-data regressions
                 inventory-browse.test.ts      35 — use cases, paging, and every component
                 inventory-presentation.test.ts 31 — labels, filters, sort stability

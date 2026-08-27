@@ -62,7 +62,9 @@ export function playbookViewModel({ store }) {
 		note: state.note,
 		title: playbook.title,
 		summary: playbook.summary,
-		rationale: playbook.rationale,
+		mode: state.mode,
+		rationale: playbook.rationale[state.mode] ?? playbook.rationale.guided,
+		autoScript: playbook.buildScript(state.params),
 		params: playbook.params.map((p) => ({ ...p, value: state.params[p.id] ?? p.default })),
 		steps: steps.map((step) => ({ ...step, done: done.has(step.id) })),
 		openStepId: state.progress.openStepId,
@@ -72,6 +74,25 @@ export function playbookViewModel({ store }) {
 		coverageSummary: coverageSummary(state.coverage),
 		recommended: shouldRecommendPlaybook(state.coverage),
 	};
+}
+
+/**
+ * Set execution mode.
+ *
+ * A use case rather than a direct store call for the same reason applyParams
+ * is: the canvas toggle and the MCP tool both route through here, so neither
+ * can be the one that forgets to validate.
+ *
+ * @param {{ store: PlaybookStore }} ctx
+ * @param {unknown} raw
+ * @returns {{ ok: true } | { ok: false, errors: string[] }}
+ */
+export function setMode({ store }, raw) {
+	if (raw !== "guided" && raw !== "auto") {
+		return { ok: false, errors: [`Mode must be "guided" or "auto".`] };
+	}
+	store.setMode(raw);
+	return { ok: true };
 }
 
 /**
@@ -110,6 +131,7 @@ export function buildHandoff({ store }) {
 		title: vm.title,
 		summary: vm.summary,
 		params: state.params,
+		mode: vm.mode,
 		coverageSummary: vm.coverageSummary,
 		steps: vm.steps.map((s) => ({
 			id: s.id,
@@ -120,7 +142,8 @@ export function buildHandoff({ store }) {
 			destructive: s.script?.destructive ?? false,
 			effect: s.script?.effect,
 		})),
-		prompt: renderHandoffPrompt(vm),
+		script: vm.mode === "auto" ? vm.autoScript.code : undefined,
+		prompt: vm.mode === "auto" ? renderAutoPrompt(vm) : renderHandoffPrompt(vm),
 	};
 }
 
@@ -165,6 +188,47 @@ export function renderHandoffPrompt(vm) {
 	);
 
 	return lines.join("\n");
+}
+
+/**
+ * The auto-mode prompt: run it, do not narrate it.
+ *
+ * The inverse of {@link renderHandoffPrompt}, and it has to be as emphatic in
+ * the opposite direction. A model handed a block of PowerShell alongside eight
+ * numbered explanations will reliably do the safe, familiar thing — present the
+ * steps and wait — which in this mode is a failure. So the steps are not in
+ * this prompt at all. There is one script and one instruction.
+ *
+ * What it must not lose: the operator still authenticates. Connect-IPPSSession
+ * opens a browser prompt and blocks, so "run this" means "run this and wait for
+ * me to sign in", and the prompt says so — a model that assumes a hang and
+ * kills the terminal would be the obvious way for this to go wrong.
+ *
+ * @param {ReturnType<typeof playbookViewModel>} vm
+ * @returns {string}
+ */
+export function renderAutoPrompt(vm) {
+	return [
+		`Run the "${vm.title}" playbook for me. Do not walk me through it — run it.`,
+		"",
+		`Current state: ${vm.coverageSummary}`,
+		"",
+		"Run the script below in a PowerShell terminal, as one script, in one session. It signs in, creates the DLP policy and both agent-scoped rules, and reads back the result.",
+		"",
+		"```powershell",
+		vm.autoScript.code,
+		"```",
+		"",
+		"Three things to know while it runs:",
+		"",
+		`1. It changes my tenant. ${vm.autoScript.effect ?? ""}`.trimEnd(),
+		"2. Connect-IPPSSession opens a browser sign-in and blocks until I complete it. That is not a hang — wait for it, and tell me if you need me to sign in.",
+		"3. It is idempotent. If it fails partway, re-run it; it reuses an existing policy and skips rules that already exist.",
+		"",
+		"It stops on its own if the sensitive information type does not exist, without changing anything — if that happens, tell me rather than creating a different one.",
+		"",
+		"When it finishes, show me the policy and rules it printed, then re-check my agents' DLP coverage.",
+	].join("\n");
 }
 
 /**

@@ -98,6 +98,9 @@ document.addEventListener("click", (e) => {
 	const step = closest(e.target, "[data-step]");
 	if (step) return void post("/api/playbook/step", { stepId: step.dataset.step });
 
+	const mode = closest(e.target, "[data-mode]");
+	if (mode) return void post("/api/playbook/mode", { mode: mode.dataset.mode });
+
 	const action = closest(e.target, "[data-action]");
 	if (action?.dataset.action === "handoff") return void post("/api/playbook/handoff");
 });

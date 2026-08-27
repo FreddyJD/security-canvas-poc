@@ -12,7 +12,14 @@ import {
 } from "../features/purview-protection/domain/coverage.mjs";
 import { PlaybookStore } from "../features/purview-protection/usecases/store.mjs";
 import * as playbook from "../features/purview-protection/usecases/run-playbook.mjs";
-import { scriptBlock, stepCard, progressBar } from "../features/purview-protection/components/playbook-steps.mjs";
+import {
+	autoPanel,
+	modeToggle,
+	scriptBlock,
+	stepCard,
+	progressBar,
+} from "../features/purview-protection/components/playbook-steps.mjs";
+import { renderPlaybook } from "../features/purview-protection/views/playbook-screen.mjs";
 import type {
 	AgentCatalog,
 	InventoryAgent,
@@ -202,6 +209,111 @@ describe("resolvePlaybook", () => {
 });
 
 // ---------------------------------------------------------------------------
+// The composed auto script
+// ---------------------------------------------------------------------------
+
+describe("buildScript", () => {
+	const params = { policyName: "AIAgentPolicy", sitName: "ProjectArgus", confidenceLevel: "Low" };
+	const script = PROTECT_AGENTS_PLAYBOOK.buildScript(params);
+
+	it("interpolates the parameters, like the steps do", () => {
+		const custom = PROTECT_AGENTS_PLAYBOOK.buildScript({
+			policyName: "ContosoAgentDLP",
+			sitName: "ContosoPII",
+			confidenceLevel: "High",
+		});
+		expect(custom.code).toContain('-DisplayName "ContosoAgentDLP"');
+		expect(custom.code).toContain('confidenceLevel="High"');
+		expect(custom.code).not.toContain("ProjectArgus");
+	});
+
+	it("keeps the agent-scoping JSON identical to the guided steps", () => {
+		// Two artifacts, one policy. If they drift, the mode you picked decides
+		// whether your tenant is actually protected.
+		const stepCode = PROTECT_AGENTS_PLAYBOOK.buildSteps(params)
+			.map((s) => s.script?.code ?? "")
+			.join("\n");
+		for (const fragment of [
+			'"AgentScoping"',
+			'"EnforcementMode":"Block"',
+			'"Inclusions":["all"]',
+			'Setting="AccessByAIAgent"',
+		]) {
+			expect(stepCode).toContain(fragment);
+			expect(script.code).toContain(fragment);
+		}
+	});
+
+	it("creates both rules, since one alone leaves a path open", () => {
+		expect(script.code).toContain("ProjectArgusAgentAndToolBlock");
+		expect(script.code).toContain("ProjectArgusAgentBlock");
+	});
+
+	it("is idempotent: an existing policy is reused, not recreated", () => {
+		// New-DlpCompliancePolicy on a taken name is a hard error, and an
+		// unattended script gets re-run after every failed sign-in.
+		expect(script.code).toMatch(/try \{ \$policy = Get-DlpCompliancePolicy -Identity "AIAgentPolicy"/);
+		expect(script.code).toMatch(/already exists; reusing it/);
+	});
+
+	it("catches the lookup rather than relying on -ErrorAction", () => {
+		// ErrorActionPreference is Stop and the REST-backed cmdlets can throw a
+		// terminating error for a missing identity, which -ErrorAction
+		// SilentlyContinue does not suppress. That is the fresh-tenant path.
+		expect(script.code).not.toMatch(/-ErrorAction SilentlyContinue/);
+		expect(script.code.match(/\} catch \{ \}/g) ?? []).toHaveLength(2);
+	});
+
+	it("skips a rule that already exists", () => {
+		expect(script.code).toMatch(/\$existingRules -contains/);
+	});
+
+	it("stops before changing anything when the SIT is missing", () => {
+		// The one condition a human reading step 3 would have caught. Without
+		// the SIT the rules create and enforce nothing — a tenant that looks
+		// protected, which is worse than a visible failure.
+		expect(script.code).toMatch(/if \(-not \$sit\) \{/);
+		expect(script.code).toMatch(/throw "Sensitive information type/);
+		expect(script.code).toMatch(/Nothing was changed/);
+
+		const sitCheck = script.code.indexOf("if (-not $sit)");
+		const firstWrite = script.code.indexOf("New-DlpCompliancePolicy");
+		expect(sitCheck).toBeGreaterThan(-1);
+		expect(sitCheck).toBeLessThan(firstWrite);
+	});
+
+	it("fails loudly rather than continuing past a broken step", () => {
+		expect(script.code).toMatch(/^\$ErrorActionPreference = "Stop"/);
+	});
+
+	it("signs in within the script, since the session cannot be shared", () => {
+		// Connect-IPPSSession authenticates the process. Split across
+		// invocations it would sign in and throw the session away.
+		expect(script.code).toContain("Connect-IPPSSession");
+		expect(script.code.indexOf("Connect-IPPSSession")).toBeLessThan(script.code.indexOf("Get-DlpSensitiveInformationType"));
+	});
+
+	it("reads back the result rather than asserting success", () => {
+		expect(script.code).toContain("Get-DlpComplianceRule -Policy");
+	});
+
+	it("is marked destructive and states its effect", () => {
+		expect(script.destructive).toBe(true);
+		expect(script.effect).toBeTruthy();
+	});
+
+	it("never interpolates an unvalidated value", () => {
+		// The allowlist is what makes interpolation safe; this asserts the
+		// script builder is downstream of it and not a second, weaker path.
+		const rejected = playbook.applyParams(
+			{ store: new PlaybookStore() },
+			{ sitName: `x"; Remove-DlpCompliancePolicy -Identity "AIAgentPolicy" -Confirm:$false; "` },
+		);
+		expect(rejected.ok).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Coverage
 // ---------------------------------------------------------------------------
 
@@ -306,6 +418,32 @@ describe("PlaybookStore", () => {
 		store.openStep("connect");
 		expect(store.get().progress.openStepId).toBeNull();
 	});
+
+	it("starts in guided mode, so the safe mode is never opt-in", () => {
+		expect(new PlaybookStore().get().mode).toBe("guided");
+	});
+
+	it("switches mode and says what changed", () => {
+		const store = new PlaybookStore();
+		store.setMode("auto");
+		expect(store.get().mode).toBe("auto");
+		expect(store.get().note).toMatch(/Copilot runs the whole script/);
+	});
+
+	it("keeps progress across a mode switch", () => {
+		// Unlike a parameter change, the steps are unchanged — only who runs
+		// them differs — so a ticked step still refers to a real command.
+		const store = new PlaybookStore();
+		store.toggleDone("connect");
+		store.setMode("auto");
+		expect(store.get().progress.claimedDone).toEqual(["connect"]);
+	});
+
+	it("ignores a mode it does not recognise", () => {
+		const store = new PlaybookStore();
+		store.setMode("yolo" as never);
+		expect(store.get().mode).toBe("guided");
+	});
 });
 
 /** A stub checked against the port the use cases actually depend on. */
@@ -395,6 +533,74 @@ describe("buildHandoff", () => {
 		await playbook.refreshCoverage(c);
 		expect(playbook.buildHandoff(c).prompt).toMatch(/2 of 2 agents are not covered/);
 	});
+
+	it("carries no runnable script in guided mode", () => {
+		expect(playbook.buildHandoff(ctx()).script).toBeUndefined();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Auto mode
+// ---------------------------------------------------------------------------
+
+describe("setMode", () => {
+	it("rejects anything outside the two modes", () => {
+		const c = ctx();
+		const result = playbook.setMode(c, "sudo");
+		expect(result.ok).toBe(false);
+		expect(c.store.get().mode).toBe("guided");
+	});
+
+	it("applies a valid mode", () => {
+		const c = ctx();
+		expect(playbook.setMode(c, "auto").ok).toBe(true);
+		expect(c.store.get().mode).toBe("auto");
+	});
+});
+
+describe("buildHandoff in auto mode", () => {
+	function autoCtx() {
+		const c = ctx();
+		c.store.setMode("auto");
+		return c;
+	}
+
+	it("tells the model to run it, in the words the guided prompt forbids", () => {
+		const { prompt } = playbook.buildHandoff(autoCtx());
+		expect(prompt).toMatch(/Do not walk me through it — run it/);
+		expect(prompt).not.toMatch(/Do not attempt to run any of this yourself/);
+	});
+
+	it("carries the composed script, not the eight steps", () => {
+		// A model given both a runnable script and a numbered walkthrough takes
+		// the walkthrough. Offering one artifact removes the choice.
+		const handoff = playbook.buildHandoff(autoCtx());
+		expect(handoff.script).toContain("Connect-IPPSSession");
+		expect(handoff.prompt).not.toMatch(/^1\. Install the Exchange Online module/m);
+	});
+
+	it("warns that the sign-in prompt is not a hang", () => {
+		// The obvious failure: a model assumes a blocked terminal and kills it
+		// mid-policy.
+		expect(playbook.buildHandoff(autoCtx()).prompt).toMatch(/not a hang/);
+	});
+
+	it("still says the tenant changes", () => {
+		expect(playbook.buildHandoff(autoCtx()).prompt).toMatch(/changes my tenant/i);
+	});
+
+	it("says re-running is safe, since an unattended script gets re-run", () => {
+		expect(playbook.buildHandoff(autoCtx()).prompt).toMatch(/idempotent/);
+	});
+
+	it("tells the model to report a missing SIT rather than substitute one", () => {
+		expect(playbook.buildHandoff(autoCtx()).prompt).toMatch(/tell me rather than creating a different one/);
+	});
+
+	it("reports the mode, so a caller can tell which contract it got", () => {
+		expect(playbook.buildHandoff(autoCtx()).mode).toBe("auto");
+		expect(playbook.buildHandoff(ctx()).mode).toBe("guided");
+	});
 });
 
 describe("sendToCopilot", () => {
@@ -477,5 +683,79 @@ describe("progressBar", () => {
 
 	it("never divides by zero", () => {
 		expect(progressBar(0, 0)).toContain("width:0%");
+	});
+});
+
+describe("modeToggle", () => {
+	it("marks the selected mode for assistive tech, not only visually", () => {
+		const html = modeToggle("auto");
+		expect(html).toMatch(/data-mode="auto"[^>]*aria-checked="true"/s);
+		expect(html).toMatch(/data-mode="guided"[^>]*aria-checked="false"/s);
+	});
+
+	it("names both modes as choices rather than as on and off", () => {
+		const html = modeToggle("guided");
+		expect(html).toContain("Walk me through it");
+		expect(html).toContain("Just run it");
+	});
+
+	it("says the operator still signs in, on the mode that acts", () => {
+		expect(modeToggle("guided")).toMatch(/You still sign in/);
+	});
+});
+
+describe("autoPanel", () => {
+	const script = PROTECT_AGENTS_PLAYBOOK.buildScript({
+		policyName: "AIAgentPolicy",
+		sitName: "ProjectArgus",
+		confidenceLevel: "Low",
+	});
+
+	it("shows the script in full, since something else is about to run it", () => {
+		const html = autoPanel(script);
+		expect(html).toContain("Connect-IPPSSession");
+		expect(html).toContain("New-DlpComplianceRule");
+	});
+
+	it("carries the tenant warning", () => {
+		expect(autoPanel(script)).toContain("script-warning");
+	});
+});
+
+describe("renderPlaybook", () => {
+	const base = {
+		status: "ready" as const,
+		note: "",
+		title: "Protect agents from sensitive data",
+		summary: "Create a policy.",
+		rationale: ["Because."],
+		params: [],
+		steps: [{ id: "connect", kind: "prerequisite" as const, title: "Connect", body: [], done: false }],
+		openStepId: "connect",
+		doneCount: 0,
+		stepCount: 8,
+		coverage: null,
+		coverageSummary: "unknown",
+		recommended: true,
+		autoScript: PROTECT_AGENTS_PLAYBOOK.buildScript({
+			policyName: "AIAgentPolicy",
+			sitName: "ProjectArgus",
+			confidenceLevel: "Low",
+		}),
+	};
+
+	it("shows the steps in guided mode", () => {
+		const html = renderPlaybook({ ...base, mode: "guided" } as never);
+		expect(html).toContain("steps marked done");
+		expect(html).toContain("Walk me through this in chat");
+	});
+
+	it("replaces the steps with the script in auto mode", () => {
+		// Leaving the step list up next to "Copilot runs this" would invite
+		// ticking steps nobody is running, and the progress bar would measure
+		// something that no longer happens.
+		const html = renderPlaybook({ ...base, mode: "auto" } as never);
+		expect(html).toContain("Run it in chat");
+		expect(html).not.toContain("steps marked done");
 	});
 });
