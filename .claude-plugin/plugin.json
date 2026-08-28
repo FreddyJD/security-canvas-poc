@@ -26,24 +26,8 @@
         "${CLAUDE_PLUGIN_ROOT}/dist/mcp.mjs"
       ],
       "env": {
-        "SECURITY_CANVAS_DATA_DIR": "${CLAUDE_PLUGIN_DATA}",
-        "SECURITY_CANVAS_CLIENT_ID": "${user_config.client_id}",
-        "SECURITY_CANVAS_TENANT_ID": "${user_config.tenant_id}"
+        "SECURITY_CANVAS_DATA_DIR": "${CLAUDE_PLUGIN_DATA}"
       }
-    }
-  },
-  "userConfig": {
-    "client_id": {
-      "type": "string",
-      "title": "Entra app registration (client ID)",
-      "description": "Optional. Leave blank to use the app registration shipped with the plugin. Set this to your own public-client app registration if your tenant requires it. The app must declare the delegated Microsoft Graph scope IdentityRiskyAgent.Read.All and register http://localhost as a redirect URI.",
-      "default": ""
-    },
-    "tenant_id": {
-      "type": "string",
-      "title": "Entra tenant ID",
-      "description": "Optional. Leave blank to sign in against any work or school account. Set a tenant GUID or domain to pin sign-in to one tenant.",
-      "default": ""
     }
   }
 }
