@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+      # dist/mcp.mjs is committed and is what every host actually runs, so a
+      # source change that lands without a rebuild ships a server no test
+      # covers. This fails the build in that case.
+      - name: Bundle is up to date
+        run: npm run build:check
+
+      # The manifests are only read by Claude at install time, where a schema
+      # error surfaces as "Marketplace sync failed" with no detail. Catch it
+      # here instead.
+      - name: Validate plugin manifests
+        run: |
+          npm i -g @anthropic-ai/claude-code
+          claude plugin validate . --strict
+          claude plugin validate ./skills
+
+      # The bundle exists so the server starts with no node_modules. Prove it
+      # in the condition that broke: an empty directory, nothing installed.
+      - name: Bundle runs standalone
+        run: |
+          mkdir -p /tmp/standalone
+          cp dist/mcp.mjs /tmp/standalone/
+          cd /tmp/standalone
+          node mcp.mjs < /dev/null 2>&1 | tee out.txt
+          grep -q "MCP server ready on stdio" out.txt

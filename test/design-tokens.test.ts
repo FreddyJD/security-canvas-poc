@@ -163,6 +163,11 @@ describe("no untokenized colour outside the generated theme", () => {
 	function sourceFiles(dir: string, found: string[] = []): string[] {
 		for (const entry of readdirSync(dir, { withFileTypes: true })) {
 			if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+			// dist/ is the generated MCP bundle: source plus every dependency
+			// inlined, including the theme file whose literals this rule exempts.
+			// Scanning it would report the palette back as hundreds of violations
+			// in a file nobody edits.
+			if (dir === "." && entry.name === "dist") continue;
 
 			const path = join(dir, entry.name);
 
