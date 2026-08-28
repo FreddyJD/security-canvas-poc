@@ -175,7 +175,7 @@ export class InventoryError extends Error {
 	get remediation() {
 		switch (this.status) {
 			case 401:
-				return "Not authenticated. Sign in from the canvas, or set SECURITY_CANVAS_TOKEN to a Microsoft Graph token.";
+				return "Not authenticated. Call the sign_in tool, sign in from the canvas, or set SECURITY_CANVAS_TOKEN to a Microsoft Graph token.";
 			case 403:
 				// The service gates on directory role, not on a Graph scope — a
 				// correctly-scoped token from a non-admin still gets 403 here.

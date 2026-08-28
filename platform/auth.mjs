@@ -21,7 +21,7 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import http from "node:http";
 import { createHash, randomBytes } from "node:crypto";
 import { CACHE_FILE, CONFIG_DIR, GRAPH_BASE, SCOPES, getConfig } from "./config.mjs";
@@ -268,6 +268,53 @@ export async function getToken() {
 		if (t) return t;
 	}
 	return getAzureCliToken();
+}
+
+/**
+ * Where the current credential comes from, without acquiring one.
+ *
+ * The canvas answers this with a button that is either present or absent. A
+ * headless host has no such affordance, so the state has to be reportable: an
+ * analyst who gets an empty agent list needs to know whether they are signed
+ * out, or signed in through the Azure CLI whose token cannot carry
+ * IdentityRiskyAgent.Read.All (see the note at the top of this file) and will
+ * therefore 403 on exactly the calls they care about.
+ *
+ * Deliberately does not fall through to `az`: shelling out on a status check
+ * would make an informational call take seconds and could trigger the CLI's own
+ * interactive login.
+ *
+ * @returns {{ state: "token" | "cached" | "refreshable" | "none", expiresAt?: number, tenantId?: string }}
+ */
+export function tokenStatus() {
+	const { directToken, tenantId } = getConfig();
+	if (directToken) return { state: "token" };
+
+	const cached = readCache();
+	if (cached?.accessToken && cached.expiresAt - 60_000 > Date.now()) {
+		return { state: "cached", expiresAt: cached.expiresAt, tenantId: cached.tenantId || tenantId };
+	}
+	if (cached?.refreshToken) return { state: "refreshable", tenantId: cached.tenantId || tenantId };
+	return { state: "none" };
+}
+
+/**
+ * Forget the cached credential.
+ *
+ * Sign-out matters more here than in the canvas: a plugin's token cache lives
+ * in a directory that survives plugin updates, so without this the only way to
+ * drop a credential is to know the cache path and delete it by hand. Leaves the
+ * config file alone — the user's client/tenant choice is not a credential.
+ *
+ * @returns {boolean} whether a cached credential existed
+ */
+export function signOut() {
+	try {
+		rmSync(CACHE_FILE);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 /**

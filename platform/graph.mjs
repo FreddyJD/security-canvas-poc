@@ -249,7 +249,7 @@ export class GraphError extends Error {
 	get remediation() {
 		switch (this.status) {
 			case 401:
-				return "Not authenticated. Sign in from the canvas, run `az login`, or set SECURITY_CANVAS_CLIENT_ID for browser sign-in.";
+				return "Not authenticated. Call the sign_in tool, sign in from the canvas, or set SECURITY_CANVAS_TOKEN for a headless session.";
 			case 403:
 				return "Authenticated but not authorized. Requires the IdentityRiskyAgent.Read.All permission and a Security Reader, Security Operator, or Security Administrator role.";
 			case 404:

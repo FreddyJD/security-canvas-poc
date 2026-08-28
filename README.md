@@ -292,6 +292,48 @@ To use your own app registration instead, set `SECURITY_CANVAS_CLIENT_ID` or wri
 
 ### MCP server
 
+### Claude Code plugin
+
+Add the marketplace and install:
+
+```
+/plugin marketplace add FreddyJD/security-canvas-poc
+/plugin install security-canvas@security-canvas
+```
+
+Then sign in from inside Claude — "sign in to Entra", or just ask for your risky
+agents and let it call `sign_in` when the read comes back unauthenticated. The browser
+opens on the standard Microsoft account picker, and the credential is cached on the
+device, so this is a one-time step.
+
+Add the marketplace by **repo**, not by a direct URL to `marketplace.json`: the plugin
+entry uses `"source": "./"`, and a URL-added marketplace downloads only the catalog
+file, so the relative source never resolves.
+
+Claude Code gets the **tools and the skills, not the canvas** — `@github/copilot-sdk`
+is a Copilot app API, so the three panels have no host to render in. What ships is the
+12 MCP tools plus three workflow skills (`triage-risky-agents`, `protect-agent-data`,
+`agent-posture-review`) that carry the sequencing the canvas otherwise expresses
+through its UI.
+
+Two host differences worth knowing:
+
+- **State lives in `${CLAUDE_PLUGIN_DATA}`**, not `~/.copilot/security-canvas`. Claude
+  installs each plugin version into a fresh cache directory, so a token cache written
+  next to the code would be discarded on every update. The plugin's MCP config forwards
+  the persistent path as `SECURITY_CANVAS_DATA_DIR`.
+- **`npm ci` runs on install.** Claude installs a plugin's Node dependencies into the
+  cache when the root has both a `package.json` and a lockfile, so the no-node_modules
+  constraint that shapes the canvas build does not apply here.
+
+To use your own app registration, leave the plugin settings blank to accept the shipped
+one, or set **Entra app registration (client ID)** and **Entra tenant ID** when Claude
+prompts at enable time. It must be a public client with `http://localhost` registered as
+a redirect URI and the delegated `IdentityRiskyAgent.Read.All` scope.
+
+For a headless or remote session where no browser can open, set `SECURITY_CANVAS_TOKEN`
+to a Graph access token instead of calling `sign_in`.
+
 ## Tools
 
 | Tool | Purpose |
@@ -305,6 +347,7 @@ To use your own app registration instead, set `SECURITY_CANVAS_CLIENT_ID` or wri
 | `assess_agent_blast_radius` | Correlates Entra risk with Purview + GitHub exposure. |
 | `list_recent_agent_detections` | Tenant-wide activity in a time window, grouped by type. |
 | `update_agent_risk_state` | dismiss / confirmCompromised / confirmSafe. **Gated.** |
+| `sign_in` · `get_auth_status` · `sign_out` | The Entra session, for hosts with no canvas. The canvas has a Sign in button; a stdio client has to be able to call one. |
 
 ### Design rules
 
