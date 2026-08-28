@@ -294,11 +294,29 @@ To use your own app registration instead, set `SECURITY_CANVAS_CLIENT_ID` or wri
 
 ### Claude Code plugin
 
-Add the marketplace and install:
+**Terminal CLI:**
 
 ```
 /plugin marketplace add FreddyJD/security-canvas-poc
 /plugin install security-canvas@security-canvas
+```
+
+**Claude desktop app (Code tab):** `/plugin` is a CLI command and does not exist in the
+desktop app — typing it in Cowork reports `Unknown skill: plugin`. Use the **+** button
+next to the prompt box → **Plugins** → **Add plugin**, which opens the plugin browser.
+
+**Any session, no UI:** register the marketplace in `.claude/settings.json` so anyone who
+opens the repo gets it:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "security-canvas": {
+      "source": { "source": "github", "repo": "FreddyJD/security-canvas-poc" }
+    }
+  },
+  "enabledPlugins": { "security-canvas@security-canvas": true }
+}
 ```
 
 Then sign in from inside Claude — "sign in to Entra", or just ask for your risky

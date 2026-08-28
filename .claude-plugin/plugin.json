@@ -21,7 +21,17 @@
     "mcp"
   ],
 
-  "mcpServers": "./.claude-plugin/mcp.json",
+  "mcpServers": {
+    "security-canvas": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp.mjs"],
+      "env": {
+        "SECURITY_CANVAS_DATA_DIR": "${CLAUDE_PLUGIN_DATA}",
+        "SECURITY_CANVAS_CLIENT_ID": "${user_config.client_id}",
+        "SECURITY_CANVAS_TENANT_ID": "${user_config.tenant_id}"
+      }
+    }
+  },
 
   "userConfig": {
     "client_id": {
