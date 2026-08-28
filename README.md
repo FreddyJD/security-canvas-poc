@@ -307,10 +307,17 @@ nothing else to do. Then ask for your risky agents — the first read comes back
 unauthenticated, the model calls `sign_in`, and your browser opens on the Microsoft
 account picker. The credential caches on the device, so that happens once.
 
-Both plugin settings are optional and default to blank. Press Enter through the
-configuration prompt to accept the shipped app registration, or fill them in to use your
-own — it must be a public client with `http://localhost` registered as a redirect URI and
-the delegated `IdentityRiskyAgent.Read.All` scope.
+Both plugin settings are optional and there is nothing to fill in: the shipped app
+registration works as-is. To use your own instead, write `~/.copilot/security-canvas/config.json`:
+
+```json
+{ "clientId": "<your-app-id>", "tenantId": "<your-tenant-id>" }
+```
+
+It must be a public client with `http://localhost` registered as a redirect URI and the
+delegated `IdentityRiskyAgent.Read.All` scope. (The plugin deliberately declares no
+`userConfig`: the desktop app's MCP bridge drops any plugin whose server config references
+`${user_config.*}`, which silently costs you Cowork.)
 
 **Claude desktop app (Code tab):** `/plugin` is a CLI command and does not exist in the
 desktop app — typing it in Cowork reports `Unknown skill: plugin`. Use the **+** button
@@ -340,12 +347,20 @@ security-canvas@security-canvas`, or the Update button. Declaring a version woul
 plugin and grey that button out until the string changed. `claude plugin validate` warns
 about the omission; that warning is the trade, which is why CI does not run `--strict`.
 
-**Cowork does not run this plugin's tools.** Cowork installs plugins through a remote API
-and runs the session in a VM, so a plugin's stdio MCP server is never spawned — the log
-line is `no stdio servers connected`. The skills load, because they are markdown that
-syncs to the backend, and every tool they name is absent. This is architectural rather
-than a packaging problem: nothing in the plugin changes it. Use the terminal CLI or the
-Code tab.
+**Cowork works too — through the desktop app's MCP bridge, not the plugin loader.** The
+desktop app runs a plugin's stdio MCP server locally and announces its tools to Cowork
+(`[localMcpBridge] announcing security-canvas: 12 tool(s)`). Because the server is a local
+process, `sign_in` opens the real browser on your machine and the token caches in your home
+directory — no hosted service, no client secret, no token custody.
+
+The one thing that breaks this: a plugin whose `mcpServers` config references
+`${user_config.*}` is dropped by the bridge with `user_config is not supported on the
+desktop host bridge`, so the plugin loads its skills and none of its tools. That is why the
+Entra client and tenant are configured through a file rather than through `userConfig`.
+
+If Cowork shows the skills but no tools, check `~/Library/Logs/Claude/main.log` for
+`localMcpBridge` and `PluginMcpHostConfig` — the bridge says exactly which server it
+dropped and why.
 
 Claude Code gets the **tools and the skills, not the canvas** — `@github/copilot-sdk`
 is a Copilot app API, so the three panels have no host to render in. What ships is the
