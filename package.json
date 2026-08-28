@@ -27,13 +27,15 @@
     "test:panel": "node test/panel-smoke.mjs",
     "preview": "node test/panel-preview.mjs --risky",
     "preview:live": "node test/panel-preview-live.mjs",
-    "preview:details": "node test/details-preview.mjs"
+    "preview:details": "node test/details-preview.mjs",
+    "preview:app": "node test/app-preview.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
     "@types/node": "^26.2.0",
     "esbuild": "^0.28.2",
     "typescript": "^5.9.3",

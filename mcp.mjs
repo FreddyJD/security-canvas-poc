@@ -22,6 +22,24 @@ import { registerDetailsTools } from "./features/agent-details/tools/mcp-tools.m
 import { PlaybookStore } from "./features/purview-protection/usecases/store.mjs";
 import { registerPlaybookTools } from "./features/purview-protection/tools/playbook-tools.mjs";
 import { registerSessionTools } from "./features/entra-session/tools/mcp-tools.mjs";
+import { registerAgentsApp } from "./features/agent-inventory/views/app-resource.mjs";
+
+/**
+ * The Agents panel document, loaded on demand.
+ *
+ * A dynamic import for two reasons. It is half a megabyte of generated HTML
+ * that only hosts implementing MCP Apps ever ask for, so sessions that never
+ * read the resource never load it. And it is generated into dist/ by
+ * `npm run build`, which means a source checkout that has not been built yet
+ * would otherwise fail to start — a missing panel should degrade to the text
+ * tools, not take the server down.
+ *
+ * @returns {Promise<string>}
+ */
+async function agentsAppHtml() {
+	const module = await import("./dist/app-html.mjs");
+	return module.AGENTS_APP_HTML;
+}
 
 async function main() {
 	const server = new McpServer(
@@ -64,6 +82,11 @@ async function main() {
 	// the process already holds.
 	registerDetailsTools(server, { repository: new AgentDetailsRepository(undefined, inventoryRepository) });
 	registerPlaybookTools(server, { store: new PlaybookStore(), repository: inventoryRepository });
+
+	// The Agents panel, for hosts that render MCP Apps. Registered before
+	// connect() — capabilities cannot be declared once the transport is
+	// attached. Hosts without MCP Apps support simply never read it.
+	registerAgentsApp(server, agentsAppHtml);
 
 	await server.connect(new StdioServerTransport());
 	process.stderr.write("[security-canvas] MCP server ready on stdio\n");
