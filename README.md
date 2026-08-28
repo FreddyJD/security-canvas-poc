@@ -334,15 +334,22 @@ is a Copilot app API, so the three panels have no host to render in. What ships 
 `agent-posture-review`) that carry the sequencing the canvas otherwise expresses
 through its UI.
 
-Two host differences worth knowing:
+**Two host differences worth knowing:**
 
 - **State lives in `${CLAUDE_PLUGIN_DATA}`**, not `~/.copilot/security-canvas`. Claude
   installs each plugin version into a fresh cache directory, so a token cache written
   next to the code would be discarded on every update. The plugin's MCP config forwards
   the persistent path as `SECURITY_CANVAS_DATA_DIR`.
-- **`npm ci` runs on install.** Claude installs a plugin's Node dependencies into the
-  cache when the root has both a `package.json` and a lockfile, so the no-node_modules
-  constraint that shapes the canvas build does not apply here.
+- **The server runs from `dist/mcp.mjs`**, a committed bundle with the MCP SDK and zod
+  inlined. Claude Code's CLI runs `npm ci` for a plugin that ships a lockfile, but
+  Cowork copies the plugin without that step — the unbundled server died on its first
+  import and registered no tools at all. The bundle needs no `node_modules` anywhere.
+
+**Interactive sign-in needs a browser on the same machine as the server.** That holds in
+the terminal CLI and the Copilot app. It does not hold in Cowork, which runs the session
+in a VM: `sign_in` opens a browser and listens on `127.0.0.1`, and inside a VM the
+listener and your browser are different machines, so the redirect never arrives. For
+Cowork, supply a Microsoft Graph token through `SECURITY_CANVAS_TOKEN` instead.
 
 To use your own app registration, leave the plugin settings blank to accept the shipped
 one, or set **Entra app registration (client ID)** and **Entra tenant ID** when Claude
@@ -419,8 +426,10 @@ reasoned, not empirical.
 ```bash
 npm install       # only the MCP SDK + zod; the canvas itself needs no deps
 
-npm test          # 458 unit tests
+npm test          # 469 unit tests
 npm run typecheck # tsc --noEmit over JSDoc-annotated ESM
+npm run build     # bundle the MCP server into dist/mcp.mjs — commit the result
+npm run build:check # fail if dist/ is stale; CI runs this
 npm run test:e2e  # real MCP protocol against a fake tenant, no credentials needed
 npm run test:panel # boots the real Agents panel and drives it over HTTP
 npm run preview   # serves the panel on fixture data to look at in a browser

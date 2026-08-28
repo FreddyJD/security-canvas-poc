@@ -1,10 +1,13 @@
 node_modules/
-dist/
 *.log
 .env
 .env.local
 .DS_Store
 coverage/
+
+# dist/ is deliberately NOT ignored. dist/mcp.mjs is the bundled MCP server,
+# committed because every host that runs it copies the repository without
+# installing dependencies — see scripts/build-mcp.mjs.
 
 # local test harnesses
 *.tmp.mjs
