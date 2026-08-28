@@ -13,7 +13,20 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export const CONFIG_DIR = join(homedir(), ".copilot", "security-canvas");
+/**
+ * The directory the token cache and config file live in.
+ *
+ * Claude Code copies a plugin into a *versioned* cache directory and installs a
+ * fresh copy on every update, so anything written next to the code is lost the
+ * next time the plugin updates. It passes `${CLAUDE_PLUGIN_DATA}` for exactly
+ * this: a directory that outlives any single version. The plugin's MCP config
+ * forwards it as SECURITY_CANVAS_DATA_DIR.
+ *
+ * Unset everywhere else, so the Copilot app and a plain `node mcp.mjs` keep
+ * using ~/.copilot/security-canvas and an existing sign-in survives.
+ */
+export const CONFIG_DIR =
+	process.env.SECURITY_CANVAS_DATA_DIR || join(homedir(), ".copilot", "security-canvas");
 export const CONFIG_FILE = join(CONFIG_DIR, "config.json");
 export const CACHE_FILE = join(CONFIG_DIR, "token-cache.json");
 
@@ -51,6 +64,24 @@ export function writeConfigFile(patch) {
 }
 
 /**
+ * Read an environment variable, treating an unresolved placeholder as unset.
+ *
+ * Claude Code substitutes `${user_config.KEY}` in the plugin's MCP `env` block.
+ * A blank optional value can arrive as an empty string or, depending on the
+ * client version, as the literal placeholder text. Passing "${user_config.
+ * client_id}" to Entra as a client id fails with an opaque AADSTS error, so
+ * anything still carrying `${` is treated as absent and the default applies.
+ *
+ * @param {string} name
+ * @returns {string}
+ */
+function env(name) {
+	const raw = process.env[name];
+	if (!raw || raw.includes("${")) return "";
+	return raw.trim();
+}
+
+/**
  * Effective configuration: disk first, environment second.
  * @returns {{ tenantId: string, clientId: string, directToken: string }}
  */
@@ -58,8 +89,8 @@ export function getConfig() {
 	const file = readConfigFile();
 	return {
 		// "organizations" lets any work or school account sign in.
-		tenantId: process.env.SECURITY_CANVAS_TENANT_ID || file.tenantId || "organizations",
-		clientId: process.env.SECURITY_CANVAS_CLIENT_ID || file.clientId || DEFAULT_CLIENT_ID,
-		directToken: process.env.SECURITY_CANVAS_TOKEN || "",
+		tenantId: env("SECURITY_CANVAS_TENANT_ID") || file.tenantId || "organizations",
+		clientId: env("SECURITY_CANVAS_CLIENT_ID") || file.clientId || DEFAULT_CLIENT_ID,
+		directToken: env("SECURITY_CANVAS_TOKEN"),
 	};
 }

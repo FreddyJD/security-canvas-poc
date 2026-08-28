@@ -21,6 +21,7 @@ import { AgentDetailsRepository } from "./features/agent-details/data/agent-deta
 import { registerDetailsTools } from "./features/agent-details/tools/mcp-tools.mjs";
 import { PlaybookStore } from "./features/purview-protection/usecases/store.mjs";
 import { registerPlaybookTools } from "./features/purview-protection/tools/playbook-tools.mjs";
+import { registerSessionTools } from "./features/entra-session/tools/mcp-tools.mjs";
 
 async function main() {
 	const server = new McpServer(
@@ -42,7 +43,11 @@ async function main() {
 				"PowerShell for the USER to run in their own session — Purview has no API for agent-scoped DLP. " +
 				"Present those commands step by step and never execute them.\n\n" +
 				"All read tools respect the signed-in analyst's Entra RBAC. " +
-				"update_agent_risk_state changes security posture: always confirm with the user first.",
+				"update_agent_risk_state changes security posture: always confirm with the user first.\n\n" +
+				"Every tool needs a Microsoft Entra sign-in. When one reports that sign-in is required, call " +
+				"sign_in — it opens the browser account picker and caches the credential on this device. When a " +
+				"read comes back empty or refused, call get_auth_status before concluding the tenant is clean: " +
+				"signed out and signed in without the necessary role look identical in the results.",
 		},
 	);
 
@@ -52,6 +57,7 @@ async function main() {
 
 	registerTools(server, new AgentRepository());
 	registerInventoryTools(server, inventoryRepository);
+	registerSessionTools(server);
 	// The details repository reads its catalog row through the shared inventory
 	// repository, so `list_agents` and `get_agent_details` cannot disagree about
 	// the same agent — and asking about one agent does not re-download a catalog

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "security-canvas",
+  "owner": {
+    "name": "Freddy Diaz",
+    "url": "https://github.com/FreddyJD"
+  },
+  "metadata": {
+    "description": "Cross-pillar agent security triage for Microsoft Entra, Purview, Defender and GitHub.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "security-canvas",
+      "source": "./",
+      "description": "Triage risky Microsoft Entra agent identities, correlated with Purview data exposure and GitHub code access.",
+      "category": "security",
+      "keywords": [
+        "security",
+        "microsoft",
+        "entra",
+        "purview",
+        "defender",
+        "agent-security",
+        "risk-triage",
+        "mcp"
+      ]
+    }
+  ]
+}

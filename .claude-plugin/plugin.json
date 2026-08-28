@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin.json",
+  "name": "security-canvas",
+  "version": "0.1.0",
+  "description": "Cross-pillar agent security triage for a Microsoft tenant. Inventories the agents in your estate, explains why Entra flagged one as risky, weighs identity risk against Purview data exposure and GitHub code access, and hands back a Purview DLP playbook.",
+  "author": {
+    "name": "Freddy Diaz",
+    "url": "https://github.com/FreddyJD"
+  },
+  "homepage": "https://github.com/FreddyJD/security-canvas-poc",
+  "repository": "https://github.com/FreddyJD/security-canvas-poc",
+  "license": "MIT",
+  "keywords": [
+    "security",
+    "microsoft",
+    "entra",
+    "purview",
+    "defender",
+    "agent-security",
+    "risk-triage",
+    "mcp"
+  ],
+
+  "mcpServers": "./.claude-plugin/mcp.json",
+
+  "userConfig": {
+    "client_id": {
+      "type": "string",
+      "title": "Entra app registration (client ID)",
+      "description": "Leave blank to use the app registration shipped with the plugin. Set this to your own public-client app registration if your tenant requires it. The app must declare the delegated Microsoft Graph scope IdentityRiskyAgent.Read.All and register http://localhost as a redirect URI."
+    },
+    "tenant_id": {
+      "type": "string",
+      "title": "Entra tenant ID",
+      "description": "Leave blank to sign in against any work or school account ('organizations'). Set a tenant GUID or domain to pin sign-in to one tenant."
+    }
+  }
+}
