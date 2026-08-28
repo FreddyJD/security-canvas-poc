@@ -6,8 +6,7 @@
     "url": "https://github.com/FreddyJD"
   },
   "metadata": {
-    "description": "Cross-pillar agent security triage for Microsoft Entra, Purview, Defender and GitHub.",
-    "version": "0.1.0"
+    "description": "Cross-pillar agent security triage for Microsoft Entra, Purview, Defender and GitHub."
   },
   "plugins": [
     {

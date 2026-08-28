@@ -294,12 +294,23 @@ To use your own app registration instead, set `SECURITY_CANVAS_CLIENT_ID` or wri
 
 ### Claude Code plugin
 
-**Terminal CLI:**
+**Terminal CLI** — two commands, no configuration:
 
 ```
 /plugin marketplace add FreddyJD/security-canvas-poc
 /plugin install security-canvas@security-canvas
 ```
+
+If the install summary says `Run /reload-plugins to activate.`, run that and the tools
+appear in the same session; otherwise it reports `Plugin is now active.` and there is
+nothing else to do. Then ask for your risky agents — the first read comes back
+unauthenticated, the model calls `sign_in`, and your browser opens on the Microsoft
+account picker. The credential caches on the device, so that happens once.
+
+Both plugin settings are optional and default to blank. Press Enter through the
+configuration prompt to accept the shipped app registration, or fill them in to use your
+own — it must be a public client with `http://localhost` registered as a redirect URI and
+the delegated `IdentityRiskyAgent.Read.All` scope.
 
 **Claude desktop app (Code tab):** `/plugin` is a CLI command and does not exist in the
 desktop app — typing it in Cowork reports `Unknown skill: plugin`. Use the **+** button
@@ -319,14 +330,22 @@ opens the repo gets it:
 }
 ```
 
-Then sign in from inside Claude — "sign in to Entra", or just ask for your risky
-agents and let it call `sign_in` when the read comes back unauthenticated. The browser
-opens on the standard Microsoft account picker, and the credential is cached on the
-device, so this is a one-time step.
-
 Add the marketplace by **repo**, not by a direct URL to `marketplace.json`: the plugin
 entry uses `"source": "./"`, and a URL-added marketplace downloads only the catalog
 file, so the relative source never resolves.
+
+**Updating.** `plugin.json` declares no `version`, so Claude resolves it from the commit
+SHA and every push to `main` is an available update — `/plugin update
+security-canvas@security-canvas`, or the Update button. Declaring a version would pin the
+plugin and grey that button out until the string changed. `claude plugin validate` warns
+about the omission; that warning is the trade, which is why CI does not run `--strict`.
+
+**Cowork does not run this plugin's tools.** Cowork installs plugins through a remote API
+and runs the session in a VM, so a plugin's stdio MCP server is never spawned — the log
+line is `no stdio servers connected`. The skills load, because they are markdown that
+syncs to the backend, and every tool they name is absent. This is architectural rather
+than a packaging problem: nothing in the plugin changes it. Use the terminal CLI or the
+Code tab.
 
 Claude Code gets the **tools and the skills, not the canvas** — `@github/copilot-sdk`
 is a Copilot app API, so the three panels have no host to render in. What ships is the

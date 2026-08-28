@@ -31,10 +31,16 @@ jobs:
       # The manifests are only read by Claude at install time, where a schema
       # error surfaces as "Marketplace sync failed" with no detail. Catch it
       # here instead.
+      #
+      # Not --strict: the only warning is the omitted `version`, and that
+      # omission is deliberate. Declaring a version pins the plugin, so users
+      # keep the cached copy until the string changes and the Update button
+      # stays greyed out. Omitting it makes Claude resolve the version from the
+      # commit SHA, so every push to main is an available update.
       - name: Validate plugin manifests
         run: |
           npm i -g @anthropic-ai/claude-code
-          claude plugin validate . --strict
+          claude plugin validate .
           claude plugin validate ./skills
 
       # The bundle exists so the server starts with no node_modules. Prove it
