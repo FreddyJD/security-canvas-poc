@@ -46,8 +46,13 @@ export class AgentDetailsRepository {
 	 * failing to find it would look like the agent does not exist.
 	 *
 	 * Returns `null` rather than throwing on a miss: the catalog indexes only
-	 * *flagged* agents, so absence is genuinely "we hold no row for this",
+	 * agents that carry risk, so absence is genuinely "we hold no row for this",
 	 * which is weaker than "no such agent" and must not be reported as an error.
+	 *
+	 * `risk: true` matches what the Agents panel lists, so a row that is
+	 * clickable there always resolves here. Without it this read and that list
+	 * would be different sets, and the panel could open a page that reports the
+	 * agent does not exist.
 	 *
 	 * @param {string} agentId
 	 * @returns {Promise<InventoryAgent | null>}
@@ -56,7 +61,7 @@ export class AgentDetailsRepository {
 		const wanted = String(agentId ?? "").trim().toLowerCase();
 		if (!wanted) return null;
 
-		const catalog = await this.catalog.listAgents({ maxCount: 200 });
+		const catalog = await this.catalog.listAgents({ risk: true, maxCount: 200 });
 		const rows = catalog?.agents ?? [];
 		return rows.find((row) => String(row.agentId ?? "").toLowerCase() === wanted) ?? null;
 	}

@@ -20,10 +20,17 @@ import { buildMetrics, filterAgents, platformsIn, sortAgents } from "../domain/p
  * Load the estate.
  *
  * The catalog and the summary are fetched together because they answer
- * different questions and the screen needs both: the catalog is the flagged
+ * different questions and the screen needs both: the catalog is the risky
  * rows the table lists, the summary is the only place the true estate total
  * lives. They are independent, so `Promise.all` — and the repository already
  * degrades the summary to null rather than failing the pair.
+ *
+ * `risk: true` is what makes this the *risky* agents view rather than a dump of
+ * the estate. Unowned alone flags a row, so the unfiltered catalog is dominated
+ * by packaged agents nobody owns — hundreds of rows at `riskLevel: "none"` that
+ * bury the few Entra actually scored. This is the same narrowing the Security-UX
+ * Agents page applies (`fetchZtaiRiskyAgents`), so both surfaces list the same
+ * agents.
  *
  * @param {InventoryContext} ctx
  * @param {{ maxCount?: number }} [opts]
@@ -41,7 +48,7 @@ export async function refreshInventory({ store, repository }, opts = {}) {
 
 	try {
 		const [catalog, summary] = await Promise.all([
-			repository.listAgents({ maxCount: opts.maxCount ?? 200 }),
+			repository.listAgents({ risk: true, maxCount: opts.maxCount ?? 200 }),
 			repository.getSummary(),
 		]);
 
@@ -89,20 +96,21 @@ export async function connect(ctx) {
 /**
  * What the strip above the table says about what is on screen.
  *
- * The catalog is the *flagged* subset, so saying so is not a caveat — it is the
- * difference between "your tenant has 300 agents" and "300 of your 788 agents
- * need attention". Staying silent would let the table be read as the estate.
+ * Only speaks when the rows alone would mislead. The Total card already carries
+ * "with risk, of 789 in the estate", so repeating the ratio here would say the
+ * same thing twice in adjacent elements. What the card cannot say is *why* these
+ * rows and not others, which is what this adds.
  *
  * @param {readonly InventoryAgent[]} agents
  * @param {import("../domain/types.js").InventorySummary | null} summary
  */
 function noteFor(agents, summary) {
 	if (agents.length === 0) {
-		return "Connected. No agents are currently flagged in this tenant.";
+		return "Connected. No agents in this tenant currently carry risk.";
 	}
 	const total = summary?.agents?.total;
 	if (typeof total === "number" && total > agents.length) {
-		return `Showing ${agents.length.toLocaleString()} flagged agents of ${total.toLocaleString()} in the estate. The inventory API serves agents that are risky, unowned, publicly exposed, or unmonitored.`;
+		return "Listing the agents Entra ID Protection has assigned a risk level. Agents with no risk are not shown.";
 	}
 	return "";
 }
@@ -175,7 +183,7 @@ export function summarizeInventory({ store }, opts = {}) {
 		status: state.status,
 		note: state.note,
 		estateTotal: state.summary?.agents?.total ?? state.agents.length,
-		flaggedCount: state.agents.length,
+		riskyCount: state.agents.length,
 		matchedCount,
 		byRiskLevel: state.summary?.agents?.byRiskLevel ?? countBy(state.agents, (a) => a.riskLevel),
 		byPlatform: state.summary?.agents?.byPlatform ?? countBy(state.agents, (a) => a.platform),

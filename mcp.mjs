@@ -28,8 +28,9 @@ async function main() {
 		{
 			instructions:
 				"Agent inventory and cross-pillar security triage for a Microsoft tenant.\n\n" +
-				"For 'what are my agents?' start with list_agents — the whole estate across Microsoft 365 Copilot, " +
-				"Copilot Studio, Endpoint and other platforms — or get_agent_estate_summary for totals only.\n\n" +
+				"For 'what are my agents?' start with list_agents — the agents that carry risk, across Microsoft 365 " +
+				"Copilot, Copilot Studio, Endpoint and other platforms — or get_agent_estate_summary for whole-estate " +
+				"totals. list_agents lists a subset by design, so never read its row count as the tenant's agent count.\n\n" +
 				"For 'tell me more about agent X' call get_agent_details with the agent id: it returns that one " +
 				"agent's identity facts, its secure score and the goals it fails, its Conditional Access / Defender / " +
 				"Purview DLP posture, and the resources it can reach. It distinguishes a control that was evaluated " +

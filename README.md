@@ -296,7 +296,7 @@ To use your own app registration instead, set `SECURITY_CANVAS_CLIENT_ID` or wri
 
 | Tool | Purpose |
 |---|---|
-| `list_agents` | The whole agent estate across every Microsoft platform. Answers "what are my agents?". |
+| `list_agents` | The tenant's agents that carry risk, across every Microsoft platform — the same set the Security Unified UX Agents page shows. Answers "what are my risky agents?". |
 | `get_agent_details` | Everything known about **one** agent: identity facts, the secure score and the goals it fails, its Conditional Access / Defender / Purview DLP posture, and what it can reach. Answers "tell me more about X". |
 | `get_protect_agents_playbook` | The agent-scoped DLP playbook. Defaults to guided steps for the user to run; `mode: "auto"` returns one script for the agent to run, and must be asked for. |
 | `get_agent_estate_summary` | Tenant totals: counts by risk level, by platform, and coverage gaps. |
@@ -358,11 +358,12 @@ reasoned, not empirical.
 ```bash
 npm install       # only the MCP SDK + zod; the canvas itself needs no deps
 
-npm test          # 255 unit tests
+npm test          # 458 unit tests
 npm run typecheck # tsc --noEmit over JSDoc-annotated ESM
 npm run test:e2e  # real MCP protocol against a fake tenant, no credentials needed
 npm run test:panel # boots the real Agents panel and drives it over HTTP
 npm run preview   # serves the panel on fixture data to look at in a browser
+npm run preview:live # same panel, on a real captured risk=true response
 npm run inspect   # browse tools in the MCP Inspector
 ```
 
@@ -377,10 +378,14 @@ Administrator or Security Administrator, so a correctly-scoped token from a non-
 403. It takes the same delegated Graph token as everything else, so no extra consent is needed.
 `SECURITY_CANVAS_INVENTORY_BASE` points it at a dev ring or `http://localhost:5105`.
 
-> The catalog it serves is the **flagged** subset — agents that are risky, unowned, publicly
-> exposed, or unmonitored — not the whole estate. The true total comes from `agents/summary`, which
-> is why both the canvas and `list_agents` lead with "N flagged of M in the estate" rather than
-> letting the row count be read as the tenant size.
+> The catalog route serves the **flagged** subset — agents that are risky, unowned, publicly
+> exposed, or unmonitored — not the whole estate. Unowned alone flags a row, and most packaged
+> agents have no resolved owner, so that subset is dominated by agents at `riskLevel: "none"`.
+> This canvas therefore sends `?risk=true`, which narrows it to the agents that actually carry
+> risk — the same call the Security Unified UX Agents page makes, so the two surfaces list the
+> same agents. The true estate total comes from `agents/summary`, which is why the canvas and
+> `list_agents` lead with "N agents with risk, of M in the estate" rather than letting either
+> number be read as the other.
 
 Register in `.mcp.json` (already scaffolded), or point any MCP client at `node mcp.mjs`.
 

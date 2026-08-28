@@ -146,9 +146,11 @@ ok("SSE frame carries only the risky row", () => {
 	assert.equal(frame.rows[0].agentId, "a-high");
 });
 ok("SSE frame is sorted worst-first", () => assert.equal(frame.sort.column, "risk"));
-ok("SSE frame keeps the headline metrics whole-estate", () => {
+ok("SSE frame keeps the headline metrics counting the rows on screen", () => {
+	// A card is a filter, so it must not report a number it cannot reveal rows
+	// for. The 789 estate total belongs in the scope note, not on a card.
 	const total = frame.metrics.find((m) => m.id === "all");
-	assert.equal(total.value, 789);
+	assert.equal(total.value, AGENTS.length);
 });
 
 // --- the rendered HTML -----------------------------------------------------
@@ -160,7 +162,9 @@ ok("renders the risky agent as an activatable row", () => {
 	assert.match(html, /aria-label="Investigate Invoice Bot"/);
 });
 ok("does not render the clean agent", () => assert.doesNotMatch(html, /Writing Coach/));
-ok("keeps the scope note", () => assert.match(html, /flagged agents of 789/));
+ok("keeps the scope note", () => assert.match(html, /no risk are not shown/i));
+ok("puts the estate ratio on the Total card, not in its value", () =>
+	assert.match(html, /with risk, of 789 in the estate/));
 
 // --- the clean-tenant empty state ------------------------------------------
 await post("/api/inventory/filter", { kind: "risk", value: "high" });

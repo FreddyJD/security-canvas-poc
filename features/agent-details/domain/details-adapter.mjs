@@ -167,6 +167,11 @@ export function buildIdentityRows(agent, detail) {
  * The wire tokens are a contract rather than copy — showing `servicePrincipal`
  * raw would put an internal name in front of an admin.
  *
+ * `"user"` is accepted alongside `"agentUser"`. The service projects
+ * `CoverageIdentityType` verbatim and emits `agentUser`; `user` is the token the
+ * ZTAI row type documents. Matching only one silently drops the other to
+ * "unknown", so both are read.
+ *
  * @param {InventoryAgent} agent
  * @returns {string | undefined}
  */
@@ -174,6 +179,7 @@ export function identityTypeLabel(agent) {
 	switch (agent.identity?.coverageTarget) {
 		case "servicePrincipal":
 			return "Service principal";
+		case "agentUser":
 		case "user":
 			return "Agent user";
 		default:
@@ -382,7 +388,7 @@ export function buildAccessGraph(agent, detail, name) {
 		const risky = agent.riskLevel === "high" || agent.riskLevel === "medium";
 		nodes.push({
 			id: identityId,
-			label: `${name} — ${target === "user" ? "agent user" : "service principal"}`,
+			label: `${name} — ${target === "agentUser" || target === "user" ? "agent user" : "service principal"}`,
 			ring: "inner",
 			kind: "shield",
 			side: "left",

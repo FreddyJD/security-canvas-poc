@@ -214,6 +214,17 @@ describe("identity rows", () => {
 		expect(identityTypeLabel(row())).toBe("Service principal");
 	});
 
+	it("reads both spellings of the agent-user coverage target", () => {
+		// The service emits "agentUser" (ThreeDocumentProjector copies
+		// CoverageIdentityType through verbatim); Security-UX's row type documents
+		// the same case as "user". Matching only one silently degrades a real
+		// agent user to "unknown".
+		expect(identityTypeLabel(row({ identity: { servicePrincipalId: null, userId: "u-1", coverageTarget: "agentUser" } })))
+			.toBe("Agent user");
+		expect(identityTypeLabel(row({ identity: { servicePrincipalId: null, userId: "u-1", coverageTarget: "user" } })))
+			.toBe("Agent user");
+	});
+
 	it("reports authentication as known only when the identity actually resolved", () => {
 		expect(isVerified(row({ identity: { servicePrincipalId: null, userId: null, coverageTarget: "none" } }), null))
 			.toBe(false);
