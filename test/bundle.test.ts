@@ -28,6 +28,29 @@ const BUNDLE = join(ROOT, "dist", "mcp.mjs");
 let sandbox: string;
 let client: Client;
 
+/**
+ * Environment for a server under test.
+ *
+ * PATH is reduced to the directory holding the Node binary and nothing else.
+ * The credential chain falls back to `az account get-access-token` when no
+ * token is cached, and that call has a 20-second timeout, so on a machine with
+ * the Azure CLI installed any tool that reads the tenant blocks for 20s while
+ * on a machine without it the same call returns in milliseconds. Hiding `az`
+ * makes both machines behave like the second one.
+ *
+ * This is about determinism, not speed: a test whose result depends on whether
+ * the developer happens to have the Azure CLI is not testing the bundle.
+ */
+function serverEnv(dataDir: string, extra: Record<string, string> = {}) {
+	return {
+		PATH: dirname(process.execPath),
+		HOME: process.env.HOME ?? "",
+		// Keep the test off the developer's real token cache.
+		SECURITY_CANVAS_DATA_DIR: join(sandbox, dataDir),
+		...extra,
+	};
+}
+
 beforeAll(async () => {
 	if (!existsSync(BUNDLE)) {
 		execFileSync("node", [join(ROOT, "scripts", "build-mcp.mjs")], { cwd: ROOT });
@@ -45,12 +68,7 @@ beforeAll(async () => {
 			command: "node",
 			args: [join(sandbox, "mcp.mjs")],
 			cwd: sandbox,
-			env: {
-				PATH: process.env.PATH ?? "",
-				HOME: process.env.HOME ?? "",
-				// Keep the test off the developer's real token cache.
-				SECURITY_CANVAS_DATA_DIR: join(sandbox, "data"),
-			},
+			env: serverEnv("data"),
 		}),
 	);
 }, 60_000);
@@ -83,10 +101,33 @@ describe("the bundled MCP server", () => {
 		);
 	});
 
-	it("answers a tool call that needs no tenant", async () => {
-		// The playbook is pure text generation, so it exercises the tool layer
-		// and zod validation without a Graph call or a credential.
-		const res = await client.callTool({ name: "get_protect_agents_playbook", arguments: {} });
+	it("answers a tool call without reaching the network", async () => {
+		// get_protect_agents_playbook refreshes DLP coverage before it builds the
+		// handoff, and that read goes through the same credential chain as every
+		// other tool: cached token, then `az account get-access-token`, which has
+		// a 20-second timeout of its own. On a developer machine with the Azure
+		// CLI installed this call therefore blocks for 20s and this test fails,
+		// while on a machine without it the chain gives up immediately and the
+		// call takes 5ms. That is a real difference in environment, not flake.
+		//
+		// SECURITY_CANVAS_TOKEN short-circuits the chain: the token is never
+		// validated locally, so a fake one keeps the call off the CLI path
+		// entirely. Coverage still fails — there is no tenant behind it — and the
+		// tool is built to survive that, which is the behaviour worth asserting.
+		const offline = new Client({ name: "bundle-offline", version: "1.0.0" });
+		await offline.connect(
+			new StdioClientTransport({
+				command: "node",
+				args: [join(sandbox, "mcp.mjs")],
+				cwd: sandbox,
+				env: serverEnv("data-offline", { SECURITY_CANVAS_TOKEN: "not-a-real-token" }),
+			}),
+		);
+
+		const started = Date.now();
+		const res = await offline.callTool({ name: "get_protect_agents_playbook", arguments: {} });
+		const elapsed = Date.now() - started;
+
 		expect(res.isError).toBeFalsy();
 
 		const text = (res.content as Array<{ type: string; text: string }>)[0]!.text;
@@ -95,7 +136,13 @@ describe("the bundled MCP server", () => {
 		// auto mode returns one script for the agent to run, and it has to stay
 		// something the user asks for by name.
 		expect(res.structuredContent).toMatchObject({ mode: "guided" });
-	});
+
+		// The playbook is text generation. If this ever takes seconds, something
+		// has put a network round trip in front of it again.
+		expect(elapsed).toBeLessThan(5_000);
+
+		await offline.close();
+	}, 30_000);
 
 	it("reports signed-out rather than failing when there is no credential", async () => {
 		const res = await client.callTool({ name: "get_auth_status", arguments: {} });
@@ -114,13 +161,10 @@ describe("the bundled MCP server", () => {
 				command: "node",
 				args: [join(sandbox, "mcp.mjs")],
 				cwd: sandbox,
-				env: {
-					PATH: process.env.PATH ?? "",
-					HOME: process.env.HOME ?? "",
-					SECURITY_CANVAS_DATA_DIR: join(sandbox, "data-placeholder"),
+				env: serverEnv("data-placeholder", {
 					SECURITY_CANVAS_CLIENT_ID: "${user_config.client_id}",
 					SECURITY_CANVAS_TENANT_ID: "${user_config.tenant_id}",
-				},
+				}),
 			}),
 		);
 
