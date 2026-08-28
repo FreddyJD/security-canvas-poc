@@ -23,6 +23,7 @@
     "test:e2e": "node test/e2e-smoke.mjs",
     "test:panel": "node test/panel-smoke.mjs",
     "preview": "node test/panel-preview.mjs --risky",
+    "preview:live": "node test/panel-preview-live.mjs",
     "preview:details": "node test/details-preview.mjs"
   },
   "dependencies": {

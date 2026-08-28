@@ -94,6 +94,13 @@ export class InventoryClient {
 	 * That is the stored document, not a query over the whole estate, so there
 	 * is no parameter that widens it. The true estate size lives in the summary.
 	 *
+	 * `risk` is the narrowing that matters. Unowned alone flags a row, and in a
+	 * real tenant most packaged agents have no resolved owner — so the unfiltered
+	 * catalog is hundreds of rows that are "flagged" only for missing an owner,
+	 * which buries the handful Entra actually scored. `risk: true` keeps
+	 * `riskLevel !== "none"`, which is the set the Security-UX Agents page shows
+	 * (`fetchZtaiRiskyAgents`). Prefer it for any surface a human reads.
+	 *
 	 * @param {{ risk?: boolean, flagged?: boolean, maxCount?: number }} [opts]
 	 * @returns {Promise<AgentCatalog>}
 	 */

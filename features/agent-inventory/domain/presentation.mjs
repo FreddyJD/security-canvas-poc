@@ -177,11 +177,19 @@ export function lastUsedLabel(agent, now = Date.now()) {
  * cannot report a number and then reveal a different set of rows, because there
  * is only one rule and both sides call it.
  *
- * `managed` reads the Defender protection flag. That is the only governance
- * signal this endpoint actually carries — the Security-UX page uses Conditional
- * Access coverage, which is not on this wire shape. `null` counts as unmanaged,
- * which is the honest reading: an agent whose protection could not be evaluated
- * is not a governed agent.
+ * `managed` reads the Defender protection flag, because that is the only
+ * governance verdict this endpoint carries. The Security-UX page counts
+ * Conditional Access coverage instead (`coveredByPolicy`), which it computes by
+ * joining each agent's identity against the tenant's CA policies — a separate
+ * read this canvas does not make. So the two surfaces can legitimately disagree
+ * on this one card: a tenant whose agents are CA-covered but whose Defender
+ * state was never evaluated reads 1 there and 0 here. Both are honest about
+ * what they measured; neither infers the other.
+ *
+ * `null` counts as unmanaged, which is the honest reading: an agent whose
+ * protection could not be evaluated is not a governed agent. Deriving `true`
+ * from the presence of a directory identity would be the fabrication this
+ * canvas exists to avoid — it would claim a control nobody ran.
  *
  * @type {Record<AgentSlice, (agent: InventoryAgent) => boolean>}
  */
@@ -201,54 +209,64 @@ export function countSlice(agents, slice) {
 }
 
 /**
- * The four headline metrics.
+ * The four headline counts.
  *
- * They count the *whole* estate rather than the filtered view: the cards
- * describe what you have, the table describes what you are looking at.
- * Recomputing them per filter would collapse every number to the row count the
- * moment a card was pressed.
+ * Every card counts the rows the table holds, and the share is out of that same
+ * number. This is not a display choice — a card *is* a filter (`SLICE_PREDICATE`
+ * backs both the count and the narrowing), so a card that reports a number it
+ * cannot then reveal rows for is broken. Sourcing "high risk" or "unowned" from
+ * the tenant-wide summary did exactly that: it put 285 unowned above a table
+ * that could only ever show the agents actually loaded, and pressing the card
+ * revealed a handful. The same rule as the Security-UX Agents page, and the same
+ * reason.
  *
- * `summary` is preferred for the total when present, because the catalog is the
- * *flagged* subset — 788 agents in the estate can arrive as 300 flagged rows,
- * and a card reading "300 total" above them would be wrong about the tenant.
- * The other three still count rows, since only the flagged set is enumerable.
+ * The Total card is the one place the estate is named, and it is named in the
+ * caption rather than the value: the value stays the row count so the card still
+ * describes the table, and the caption says what those rows are out of. Putting
+ * 789 in the value over 7 rows is what made this screen contradict itself.
  *
  * @param {readonly InventoryAgent[]} agents
- * @param {import("./types.js").InventorySummary | null} [summary]
+ * @param {import("./types.js").InventorySummary | null} [summary] Supplies the
+ *   estate total for the Total card's caption only. Never a count.
  * @returns {AgentMetric[]}
  */
 export function buildMetrics(agents, summary = null) {
-	const estateTotal = summary?.agents?.total ?? agents.length;
-	const shareBase = agents.length || 1;
+	const total = agents.length;
+	const estateTotal = summary?.agents?.total;
 
 	return [
 		{
 			id: "all",
 			label: "Total agents",
-			value: estateTotal,
-			total: estateTotal,
+			value: total,
+			total,
 			breakdownLabel: "View breakdown",
+			// "of the whole estate" would be a false claim here: these rows are
+			// the ones carrying risk, and the estate is larger.
+			shareLabel:
+				typeof estateTotal === "number" && estateTotal > total
+					? `with risk, of ${estateTotal.toLocaleString()} in the estate`
+					: "of the whole estate",
 		},
 		{
 			id: "managed",
 			label: "Managed agents",
 			value: countSlice(agents, "managed"),
-			total: shareBase,
+			total,
 			breakdownLabel: "Review details",
 		},
 		{
 			id: "highRisk",
 			label: "Agents with high risk",
-			// The summary's byRiskLevel counts the whole estate; prefer it.
-			value: summary?.agents?.byRiskLevel?.high ?? countSlice(agents, "highRisk"),
-			total: shareBase,
+			value: countSlice(agents, "highRisk"),
+			total,
 			breakdownLabel: "Assess risk",
 		},
 		{
 			id: "unowned",
 			label: "Agents without owners",
-			value: summary?.agents?.riskSignals?.unowned ?? countSlice(agents, "unowned"),
-			total: shareBase,
+			value: countSlice(agents, "unowned"),
+			total,
 			breakdownLabel: "Review details",
 		},
 	];

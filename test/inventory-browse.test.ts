@@ -69,13 +69,39 @@ describe("refreshInventory", () => {
 		expect(c.repository.getSummary).toHaveBeenCalled();
 	});
 
-	it("says the table is the flagged subset when the estate is larger", async () => {
-		// Silence here would let 3 rows be read as the whole tenant.
+	it("says why these rows and not others when the estate is larger", async () => {
+		// The ratio lives on the Total card; the note carries what a card cannot
+		// say, which is the selection rule. Silence would let 2 rows read as the
+		// whole tenant.
 		const summary = { agents: { total: 788 } } as unknown as InventorySummary;
 		const c = ctx([agent(), agent({ agentId: "b" })], summary);
 		await inventory.refreshInventory(c);
 
-		expect(c.store.get().note).toMatch(/2 flagged agents of 788/);
+		expect(c.store.get().note).toMatch(/risk level/i);
+		expect(c.store.get().note).toMatch(/no risk are not shown/i);
+	});
+
+	it("puts the estate ratio on the Total card, not in the value", async () => {
+		// 789 in the value over 7 rows is what made this screen contradict itself.
+		const summary = { agents: { total: 788 } } as unknown as InventorySummary;
+		const c = ctx([agent(), agent({ agentId: "b" })], summary);
+		await inventory.refreshInventory(c);
+
+		const total = inventory.inventoryViewModel(c).metrics.find((m) => m.id === "all")!;
+		expect(total.value).toBe(2);
+		expect(total.shareLabel).toBe("with risk, of 788 in the estate");
+	});
+
+	it("asks the service for the risky agents, not the whole flagged catalog", async () => {
+		// Unowned alone flags a row, so the unfiltered catalog is hundreds of
+		// agents at riskLevel "none" — the same narrowing the Security-UX Agents
+		// page applies, so both surfaces list the same agents.
+		const c = ctx();
+		await inventory.refreshInventory(c);
+
+		expect(c.repository.listAgents).toHaveBeenCalledWith(
+			expect.objectContaining({ risk: true }),
+		);
 	});
 
 	it("stays quiet when the catalog already is the estate", async () => {
@@ -192,7 +218,7 @@ describe("summarizeInventory", () => {
 
 		const out = inventory.summarizeInventory(c);
 		expect(out.estateTotal).toBe(788);
-		expect(out.flaggedCount).toBe(1);
+		expect(out.riskyCount).toBe(1);
 	});
 
 	it("caps the sampled rows so the payload stays small", async () => {

@@ -145,8 +145,8 @@ export function createInventoryActions(ctx) {
 			inputSchema: { type: "object", properties: {} },
 			handler: async () => {
 				await inventory.refreshInventory(ctx);
-				const { status, estateTotal, flaggedCount, note } = inventory.summarizeInventory(ctx);
-				return { refreshed: true, status, estateTotal, flaggedCount, note };
+				const { status, estateTotal, riskyCount, note } = inventory.summarizeInventory(ctx);
+				return { refreshed: true, status, estateTotal, riskyCount, note };
 			},
 		},
 	];

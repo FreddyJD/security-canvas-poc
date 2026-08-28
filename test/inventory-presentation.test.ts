@@ -189,24 +189,32 @@ describe("slices and metrics", () => {
 		expect(countSlice(estate, "managed")).toBe(1);
 	});
 
-	it("uses the summary's estate total rather than the row count", () => {
-		// The catalog is the flagged subset: a card reading "3 total" above three
-		// rows would be wrong about a tenant with 788 agents.
+	it("counts the rows on screen, never the tenant-wide summary", () => {
+		// A card is a filter, so a card must not report a number it cannot then
+		// reveal rows for. Sourcing these from the summary put "284 unowned" above
+		// three rows, and pressing the card revealed two.
 		const summary = {
 			agents: { total: 788, byRiskLevel: { high: 12 }, riskSignals: { unowned: 284 } },
 		} as unknown as InventorySummary;
 
 		const metrics = buildMetrics(estate, summary);
-		expect(metrics[0]!.value).toBe(788);
-		expect(metrics[2]!.value).toBe(12);
-		expect(metrics[3]!.value).toBe(284);
+		expect(metrics[0]!.value).toBe(3);
+		expect(metrics[2]!.value).toBe(1);
+		expect(metrics[3]!.value).toBe(2);
 	});
 
-	it("falls back to the rows when there is no summary", () => {
+	it("counts the same rows when there is no summary at all", () => {
 		const metrics = buildMetrics(estate, null);
 		expect(metrics[0]!.value).toBe(3);
 		expect(metrics[2]!.value).toBe(1);
 		expect(metrics[3]!.value).toBe(2);
+	});
+
+	it("shares out of the rows on screen, so every card reads 'of N agents'", () => {
+		// The denominator is the row count, so a slice can never exceed 100%.
+		const metrics = buildMetrics(estate, null);
+		expect(metrics.every((m) => m.total === 3)).toBe(true);
+		expect(metrics.every((m) => m.value <= m.total)).toBe(true);
 	});
 
 	it("never divides by zero on an empty estate", () => {

@@ -34,9 +34,10 @@ export function sharePercent(metric) {
  */
 export function metricCard(metric, selected) {
 	const share =
-		metric.value === metric.total
+		metric.shareLabel ??
+		(metric.value === metric.total
 			? "of the whole estate"
-			: `${sharePercent(metric)}% of ${metric.total.toLocaleString()} agents`;
+			: `${sharePercent(metric)}% of ${metric.total.toLocaleString()} agents`);
 
 	return `<div class="metric-card${selected ? " selected" : ""}">
     <button

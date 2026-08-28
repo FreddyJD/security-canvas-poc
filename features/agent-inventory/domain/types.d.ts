@@ -13,11 +13,28 @@
 /** Risk level as served. Lower-case tokens; `none` is a real value, not absence. */
 export type InventoryRiskLevel = "none" | "low" | "medium" | "high";
 
-/** Whether the agent is a Microsoft or a third-party package. */
-export type AgentAppType = "firstParty" | "thirdParty";
+/**
+ * Whether the agent is a Microsoft or a third-party package.
+ *
+ * Both casings are real. The service composes this as upper-camel
+ * (`OverviewAgentComposer` sets `"ThirdParty"`) and the projector copies it
+ * through verbatim, which is what a live tenant returns. Security-UX's
+ * `ZtaiAgentRow` documents the lower-camel form and compares
+ * case-insensitively. Neither is safe to assume, so both are in the union.
+ */
+export type AgentAppType = "firstParty" | "thirdParty" | "FirstParty" | "ThirdParty";
 
-/** Which identity object the agent's coverage was evaluated against. */
-export type CoverageTarget = "servicePrincipal" | "user" | "none";
+/**
+ * Which identity object the agent's coverage was evaluated against.
+ *
+ * `agentUser` is what the wire actually carries: the projector copies
+ * `CoverageIdentityType` through verbatim and the composer sets `"agentUser"`.
+ * Security-UX's own `ZtaiAgentRow` declares that case as `"user"` and maps it
+ * back to `agentUser` for its grid, so the two names are both in circulation for
+ * one thing. Both are in the union because a reader hitting either deployment
+ * must get "Agent user" rather than silently falling through to unknown.
+ */
+export type CoverageTarget = "servicePrincipal" | "agentUser" | "user" | "none";
 
 /**
  * Protection state per control.
@@ -134,6 +151,15 @@ export interface AgentMetric {
 	value: number;
 	total: number;
 	breakdownLabel: string;
+	/**
+	 * Overrides the caption under the value.
+	 *
+	 * Set only where the default "N% of M agents" would be false. The rows are
+	 * the risky subset, so the Total card sits above 7 rows in a 789-agent
+	 * tenant and the default caption's "of the whole estate" would contradict
+	 * the scope note directly above the table.
+	 */
+	shareLabel?: string;
 }
 
 /** The active narrowing over the catalog. */

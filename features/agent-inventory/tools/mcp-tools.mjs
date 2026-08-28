@@ -23,10 +23,11 @@ export function registerInventoryTools(server, repository) {
 		{
 			title: "List agents",
 			description:
-				"List the tenant's AI agents across every Microsoft platform — Microsoft 365 Copilot, Copilot Studio, " +
-				"Endpoint and others — with publisher, owner, platform, risk level and status. " +
-				"This is the whole estate inventory; use list_risky_agents for the Entra identity-risk view instead. " +
-				"Answers 'what are my agents?' and 'who owns agent X?'.",
+				"List the tenant's AI agents that carry risk, across every Microsoft platform — Microsoft 365 Copilot, " +
+				"Copilot Studio, Endpoint and others — with publisher, owner, platform, risk level and status. " +
+				"This is the same set the Security Unified UX Agents page shows. " +
+				"Use get_agent_estate_summary for whole-estate totals, and list_risky_agents for the Entra identity-risk view. " +
+				"Answers 'what are my risky agents?' and 'who owns agent X?'.",
 			inputSchema: {
 				search: z.string().optional().describe("Free text matched against name, publisher, owner and platform."),
 				platforms: z
@@ -49,7 +50,7 @@ export function registerInventoryTools(server, repository) {
 		async ({ search, platforms, risks, unownedOnly, sortBy, limit }) => {
 			try {
 				const [catalog, summary] = await Promise.all([
-					repository.listAgents({ maxCount: 200 }),
+					repository.listAgents({ risk: true, maxCount: 200 }),
 					repository.getSummary(),
 				]);
 
@@ -72,7 +73,7 @@ export function registerInventoryTools(server, repository) {
 				return ok(renderInventoryText(rows, matched.length, all.length, estateTotal, summary), {
 					agents: rows,
 					matchedCount: matched.length,
-					flaggedCount: all.length,
+					riskyCount: all.length,
 					estateTotal,
 					platforms: platformsIn(all),
 					byRiskLevel: summary?.agents?.byRiskLevel,
@@ -112,22 +113,22 @@ export function registerInventoryTools(server, repository) {
 /**
  * The inventory as a scannable list.
  *
- * Leads with the scope line because the catalog is the *flagged* subset:
- * without it, a model reading 300 rows will report "you have 300 agents" when
- * the tenant has 788.
+ * Leads with the scope line because these rows are the *risky* subset: without
+ * it, a model reading 7 rows will report "you have 7 agents" when the tenant
+ * has 789.
  *
  * @param {readonly InventoryAgent[]} rows
  * @param {number} matchedCount
- * @param {number} flaggedCount
+ * @param {number} riskyCount
  * @param {number} estateTotal
  * @param {import("../domain/types.js").InventorySummary | null} summary
  */
-function renderInventoryText(rows, matchedCount, flaggedCount, estateTotal, summary) {
+function renderInventoryText(rows, matchedCount, riskyCount, estateTotal, summary) {
 	const lines = [];
 
-	if (estateTotal > flaggedCount) {
+	if (estateTotal > riskyCount) {
 		lines.push(
-			`${estateTotal.toLocaleString()} agents in the estate. The inventory API serves the ${flaggedCount.toLocaleString()} that are flagged (risky, unowned, publicly exposed, or unmonitored).`,
+			`${estateTotal.toLocaleString()} agents in the estate. ${riskyCount.toLocaleString()} carry risk, and are listed here.`,
 		);
 	} else {
 		lines.push(`${estateTotal.toLocaleString()} agents in the estate.`);
