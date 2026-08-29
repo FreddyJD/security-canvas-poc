@@ -22,11 +22,24 @@ import { join } from "node:path";
  * this: a directory that outlives any single version. The plugin's MCP config
  * forwards it as SECURITY_CANVAS_DATA_DIR.
  *
+ * The desktop host bridge does *not* expand it — it logs "the desktop host
+ * bridge has no project or plugin-data directory; left unexpanded" and passes
+ * the literal `${CLAUDE_PLUGIN_DATA}` through. Taking that at face value would
+ * create a directory with that name in the process's cwd and, worse, split the
+ * sign-in: Claude Code would cache a token in one place and Cowork in another,
+ * so signing in on one would look like being signed out on the other. Anything
+ * still carrying `${` therefore falls back to the shared default.
+ *
  * Unset everywhere else, so the Copilot app and a plain `node mcp.mjs` keep
  * using ~/.copilot/security-canvas and an existing sign-in survives.
  */
-export const CONFIG_DIR =
-	process.env.SECURITY_CANVAS_DATA_DIR || join(homedir(), ".copilot", "security-canvas");
+export const CONFIG_DIR = resolveDataDir();
+
+function resolveDataDir() {
+	const raw = process.env.SECURITY_CANVAS_DATA_DIR;
+	if (!raw || raw.includes("${")) return join(homedir(), ".copilot", "security-canvas");
+	return raw;
+}
 export const CONFIG_FILE = join(CONFIG_DIR, "config.json");
 export const CACHE_FILE = join(CONFIG_DIR, "token-cache.json");
 

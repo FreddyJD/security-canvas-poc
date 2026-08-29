@@ -33,11 +33,13 @@
   //   test/panel-smoke.mjs     npm run test:panel       the real Agents panel over HTTP
   //   test/panel-preview.mjs   npm run preview          the panel on fixtures, to look at
   //   test/details-preview.mjs npm run preview:details  the details page on fixtures
+  //   test/app-preview.mjs     npm run preview:app      the panel as an MCP App, in a host
   "exclude": [
     "node_modules",
     "test/e2e-smoke.mjs",
     "test/panel-smoke.mjs",
     "test/panel-preview.mjs",
-    "test/details-preview.mjs"
+    "test/details-preview.mjs",
+    "test/app-preview.mjs"
   ]
 }

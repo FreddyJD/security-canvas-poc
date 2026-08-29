@@ -362,22 +362,64 @@ If Cowork shows the skills but no tools, check `~/Library/Logs/Claude/main.log` 
 `localMcpBridge` and `PluginMcpHostConfig` — the bridge says exactly which server it
 dropped and why.
 
-Claude Code gets the **tools and the skills, not the canvas** — `@github/copilot-sdk`
-is a Copilot app API, so the three panels have no host to render in. What ships is the
-12 MCP tools plus three workflow skills (`triage-risky-agents`, `protect-agent-data`,
-`agent-posture-review`) that carry the sequencing the canvas otherwise expresses
-through its UI.
+Claude Code gets the **tools, the skills, and — in the desktop app — the Agents panel.**
+`@github/copilot-sdk` is a Copilot app API, so the three canvas panels have no host to
+render in there. What ships is the 12 MCP tools, three workflow skills
+(`triage-risky-agents`, `protect-agent-data`, `agent-posture-review`) that carry the
+sequencing the canvas otherwise expresses through its UI, and one **MCP App**: the Agents
+table, rendered from the same code the Copilot canvas runs.
+
+### The Agents panel in Claude
+
+`list_agents` carries `_meta.ui.resourceUri` pointing at `ui://security-canvas/agents`, an
+HTML document served as an MCP resource with the MIME type
+`text/html;profile=mcp-app` ([SEP-1865](https://github.com/modelcontextprotocol/ext-apps)).
+A host that implements MCP Apps fetches it, renders it in a sandboxed iframe beside the
+answer, and pushes the tool result in over `postMessage`. The desktop app advertises
+support on local stdio servers, which is what this plugin is:
+
+```
+[LocalMcpServerManager] capabilities: extensions:
+  { "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] } }
+```
+
+Hosts that do not implement it ignore the metadata and the resource, and `list_agents`
+returns exactly the text it always did. Nothing about the other 11 tools changes.
+
+**The markup is `renderInventory` — the function the canvas already renders.** The panel is
+not a reimplementation. `features/agent-inventory/views/app-view-model.mjs` reshapes one
+tool result into the view model that screen expects, so the table in Claude and the table
+in the Copilot app cannot disagree about which agents are risky.
+
+**The panel holds no credential.** No CSP domains are declared, so the host applies
+`connect-src 'none'` and the iframe cannot reach Graph or anything else. Sorting, filtering
+and searching call `list_agents` again *through the host*, which runs it in this server on
+the signed-in analyst's delegated token. Entra RBAC stays the authority over what the panel
+can show, exactly as for the text tools. The one thing that follows from this: the panel
+shows one page, because one tool call is one page — a pager would render buttons that
+cannot turn.
+
+`npm run preview:app` renders it in a minimal MCP Apps host with a live `postMessage` log,
+which is the fastest way to tell a handshake failure from a render failure. The handshake
+is not optional: skip `ui/initialize` and the host leaves the container hidden, showing an
+empty box with no error anywhere.
 
 **Two host differences worth knowing:**
 
 - **State lives in `${CLAUDE_PLUGIN_DATA}`**, not `~/.copilot/security-canvas`. Claude
   installs each plugin version into a fresh cache directory, so a token cache written
   next to the code would be discarded on every update. The plugin's MCP config forwards
-  the persistent path as `SECURITY_CANVAS_DATA_DIR`.
+  the persistent path as `SECURITY_CANVAS_DATA_DIR`. The desktop bridge does *not* expand
+  it — it logs `the desktop host bridge has no project or plugin-data directory; left
+  unexpanded` and passes the literal string through, so anything still carrying `${` falls
+  back to `~/.copilot/security-canvas`. Without that guard the CLI and Cowork would cache
+  tokens in different places and a sign-in in one would read as signed-out in the other.
 - **The server runs from `dist/mcp.mjs`**, a committed bundle with the MCP SDK and zod
   inlined. Claude Code's CLI runs `npm ci` for a plugin that ships a lockfile, but
   Cowork copies the plugin without that step — the unbundled server died on its first
   import and registered no tools at all. The bundle needs no `node_modules` anywhere.
+  The Agents panel is inlined into it for the same reason: a host copies the bundle and
+  runs it from wherever it lands, and a sibling HTML file would not travel with it.
 
 **Interactive sign-in needs a browser on the same machine as the server.** That holds in
 the terminal CLI and the Copilot app. It does not hold in Cowork, which runs the session
@@ -528,6 +570,7 @@ features/agent-inventory/        "what are my agents?" AND "which need triage?" 
   usecases/     inventory-browse.mjs · store.mjs
   components/   agent-table.mjs · metric-card.mjs · filter-bar.mjs
   views/        inventory-screen.mjs · inventory-server.mjs · client.mjs · styles.mjs
+                app-view-model.mjs · app-client.mjs · app-resource.mjs  the MCP App
   tools/        canvas-actions.mjs · mcp-tools.mjs
 
 features/purview-protection/     "protect my sensitive data" -- a PowerShell playbook

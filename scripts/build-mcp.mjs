@@ -24,6 +24,7 @@ import { build } from "esbuild";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { APP_HTML_MODULE, buildAppHtml, moduleSource } from "./build-app.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUTFILE = join(ROOT, "dist", "mcp.mjs");
@@ -35,6 +36,17 @@ const OUTFILE = join(ROOT, "dist", "mcp.mjs");
 const checkOnly = process.argv.includes("--check");
 
 const pkg = JSON.parse(await readFile(join(ROOT, "package.json"), "utf8"));
+
+// The Agents panel is generated first and inlined into the server bundle, so
+// one artifact carries both. Building it here rather than as a separate npm
+// script is what makes `--check` cover it: a change to the panel's markup or
+// styles now shows up as a stale dist/mcp.mjs, exactly like a change to a tool.
+const appHtml = await buildAppHtml();
+const appModule = moduleSource(appHtml);
+if (!checkOnly) {
+	await mkdir(join(ROOT, "dist"), { recursive: true });
+	await writeFile(APP_HTML_MODULE, appModule);
+}
 
 const result = await build({
 	entryPoints: [join(ROOT, "mcp.mjs")],
@@ -67,6 +79,25 @@ const result = await build({
 const built = checkOnly ? result.outputFiles[0].text : null;
 
 if (checkOnly) {
+	// Check the panel first. esbuild resolves mcp.mjs's dynamic import of
+	// dist/app-html.mjs from *disk*, so a stale panel produces a bundle that is
+	// stale in the same way and the comparison below would pass. Without this,
+	// a change to the Agents markup could ship unbuilt and unnoticed.
+	let committedApp;
+	try {
+		committedApp = await readFile(APP_HTML_MODULE, "utf8");
+	} catch {
+		process.stderr.write("dist/app-html.mjs is missing. Run: npm run build\n");
+		process.exit(1);
+	}
+	if (committedApp !== appModule) {
+		process.stderr.write(
+			"dist/app-html.mjs is stale — the Agents panel does not match the source it is built from.\n" +
+				"Run: npm run build, and commit the result.\n",
+		);
+		process.exit(1);
+	}
+
 	let committed;
 	try {
 		committed = await readFile(OUTFILE, "utf8");
@@ -97,6 +128,10 @@ const inputs = Object.keys(result.metafile.outputs[outputKey].inputs).length;
 
 process.stdout.write(`dist/mcp.mjs  ${(bytes / 1024).toFixed(0)} KB  from ${inputs} modules\n`);
 
-// Mark the bundle as generated so it collapses in diffs and does not skew
-// language statistics — it is 1 MB of vendored dependency code.
-await writeFile(join(ROOT, "dist", ".gitattributes"), "mcp.mjs linguist-generated=true\n");
+// Mark the generated artifacts so they collapse in diffs and do not skew
+// language statistics — together they are ~1.7 MB of vendored dependency code
+// and one inlined HTML document.
+await writeFile(
+	join(ROOT, "dist", ".gitattributes"),
+	"mcp.mjs linguist-generated=true\napp-html.mjs linguist-generated=true\n",
+);

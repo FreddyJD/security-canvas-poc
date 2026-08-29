@@ -12,6 +12,7 @@ import { z } from "zod";
 import { InventoryError } from "../../../platform/inventory-client.mjs";
 import { GraphError } from "../../../platform/graph.mjs";
 import { discoveryLabel, filterAgents, lastUsedLabel, ownerLabel, platformsIn, sortAgents } from "../domain/presentation.mjs";
+import { AGENTS_APP_META } from "../views/app-resource.mjs";
 
 /**
  * @param {import("@modelcontextprotocol/sdk/server/mcp.js").McpServer} server
@@ -46,6 +47,11 @@ export function registerInventoryTools(server, repository) {
 				limit: z.number().int().min(1).max(200).optional().describe("Max agents to return (default 50)."),
 			},
 			annotations: { readOnlyHint: true, openWorldHint: true },
+			// Hosts that implement MCP Apps render this result as the interactive
+			// Agents panel instead of the text block; every other host ignores the
+			// metadata and gets the text unchanged.
+			// See features/agent-inventory/views/app-resource.mjs.
+			_meta: AGENTS_APP_META,
 		},
 		async ({ search, platforms, risks, unownedOnly, sortBy, limit }) => {
 			try {
